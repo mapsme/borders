@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>Редактор границ для MAPS.ME</title>
+		<link rel="stylesheet" href="lib/leaflet.css" />
+		<script src="lib/leaflet.js"></script>
+		<script src="lib/Leaflet.Editable.js"></script>
+		<script src="lib/leaflet-hash.js"></script>
+		<script src="lib/jquery-1.11.2.min.js"></script>
+		<script src="borders.js"></script>
+		<script>server = 'http://127.0.0.1:5000';</script>
+		<style>
+			html, body, #map, #panel { margin: 0; height: 100%; }
+			#panel { width: 250px; float: right; padding: 1em; font-family: sans-serif; }
+			#panel button { font-size: 12pt; margin: 4px 0; }
+			#map { margin-right: 250px; }
+			#actions { visibility: hidden; }
+			#osm_actions { display: none; margin-top: 1em; }
+			#info { margin-top: 2em; }
+			#b_delete, #b_clear { font-size: 8pt; }
+			#rename, #split, #join, #point, #divide { display: none; }
+			.actions input[type='text'] { width: 150px; }
+			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
+			#f_topo, #f_chars, #f_comments { font-size: 10pt; }
+		</style>
+	</head>
+	<body onload="init();">
+		<div id="panel">
+			<div id="header">
+				<div id="filter">
+					Раскраска по <select size="1" id="f_type" value="size" onchange="filterSelect(this.value)">
+						<option value="size">размеру</option>
+						<option value="topo">топологии</option>
+						<option value="chars">буквам в назв.</option>
+						<option value="comments">комментариям</option>
+					</select>
+					<div id="f_size">
+						Цвета: 0–<input type="text" size="2" id="r_green">–<input type="text" size="3" id="r_red">
+						<button onclick="bUpdateColors()">&#10003;</button>
+					</div>
+					<div id="f_topo">
+						Красный — есть дыры, синий — больше одного полигона.
+						Маркерами обозначены мелкие острова.
+					</div>
+					<div id="f_chars">
+						Синий — есть пробелы, красный — символы не из ASCII.
+					</div>
+					<div id="f_comments">
+						Красный — есть комментарий.
+					</div>
+				</div>
+				<div id="b_josm">
+					<button onclick="bJOSM()">Открыть в JOSM</button>
+					<button onclick="bJosmZoom()">&#x1f50d;</button>
+				</div>
+				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="filefm">
+					Импорт <input type="file" accept=".osm,.xml" id="b_import" style="max-width: 100px;">
+				</form>
+			</div>
+			<div id="actions" class="actions">
+				<button onclick="bDisable()" id="b_disable">Убрать</button>
+				<a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a><br>
+				<button onclick="bSplit()">Разрезать</button><br>
+				<button onclick="bJoin()">Склеить</button><br>
+				<div id="osm_actions">
+					<button onclick="bDivide()">Заменить регионами</button><br>
+					<button onclick="bPoint()">Регион из точки</button><br>
+				</div>
+
+				<div id="info">
+					<b><a href="#" onclick="bShowRename(); return false;">Название:</a></b>
+					<span id="b_name"></span><br>
+					<div id="rename">
+						<input type="text" id="b_rename">
+						<button onclick="bRename()">Переименовать</button>
+					</div>
+					<b>Оценка размера:</b> <span id="b_size"></span><br>
+					<b>Последняя правка:</b> <span id="b_date"></span><br>
+					<b>Количество точек:</b> <span id="b_nodes"></span><br>
+					<b>Площадь:</b> <span id="b_area"></span> км²<br>
+					<b>Статус:</b> <span id="b_status"></span><br>
+					<b>Комментарий:</b><br>
+					<textarea style="width: 240px; height: 200px;" id="b_comment"></textarea><br>
+					<button onclick="bComment()">Отправить</button>
+					<a href="#" onclick="bClearComment(); return false;" id="b_clear">Очистить</a>
+				</div>
+			</div>
+			<div id="split" class="actions">
+				Выбрана область <span id="s_sel"></span>.<br><br>
+				Нарисуйте линию через выбранную область, затем нажмите кнопку<br>
+				<div id="s_do">
+					<button onclick="bSplitDo()">Разрезать область</button><br>
+					<button onclick="bSplitAgain()">Нарисовать по-другому</button>
+				</div>
+				<br>
+				<button onclick="bSplitCancel()">Вернуться</button>
+			</div>
+			<div id="join" class="actions">
+				Выбрана область <span id="j_sel"></span>.<br><br>
+				Выберите область, которую к ней присоединить.<br>
+				<div id="j_do">
+					Выбрана: <span id="j_name2"></span><br>
+					<button onclick="bJoinDo()">Склеить области</button>
+				</div>
+				<br>
+				<button onclick="bJoinCancel()">Вернуться</button>
+			</div>
+			<div id="point" class="actions">
+				Переместите маркер в нужную точку и нажмите<br>
+				<button onclick="bPointList()">Получить список областей</button><br>
+				Название <input type="text" id="p_name"><br>
+				<div id="p_list"></div>
+				<br>
+				<button onclick="bPointCancel()">Вернуться</button>
+			</div>
+			<div id="divide" class="actions">
+				Выбранная область будет заменена вложенными областями в соответствии с запросом.<br>
+				<br>
+				Like для названия выбранной области <input type="text" id="d_like"><br>
+				Where для субобластей <input type="text" id="d_where"><br>
+				<button onclick="bDividePreview()">Посмотреть субобласти</button><br>
+				<div id="d_do">
+					<span id="d_count"></span><br>
+					Префикс <input type="text" id="d_prefix"><br>
+					<button onclick="bDivideDo()">Заменить область</button>
+				</div>
+				<br>
+				<button onclick="bDivideCancel()">Вернуться</button>
+			</div>
+		</div>
+		<div id="map"></div>
+	</body>
+</html>
