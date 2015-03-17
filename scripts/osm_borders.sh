@@ -69,6 +69,7 @@ psql $DATABASE -c "drop table if exists osm_borders; create table osm_borders as
 
 # 4. Copy it to the borders database
 echo Copying osm_borders table to the borders database
+psql $DATABASE_BORDERS -c "drop table if exists osm_borders;" || exit 3
 pg_dump -t osm_borders $DATABASE | psql $DATABASE_BORDERS
 
 echo Done!

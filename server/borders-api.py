@@ -10,7 +10,7 @@ OSM_TABLE = 'osm_borders'
 READONLY = False
 
 app = Flask(__name__)
-#app.debug=True
+app.debug=True
 Compress(app)
 CORS(app)
 
@@ -64,12 +64,41 @@ def check_osm_table():
 
 @app.route('/split')
 def split():
+	if READONLY:
+		abort(405)
 	name = request.args.get('name')
 	line = request.args.get('line')
-	name2 = '{} p2'.format(name)
 	cur = g.conn.cursor()
-	#todo: cur.execute
-	g.conn.commit()
+	# check that we're splitting a single polygon
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	res = cur.fetchone()
+	if not res or res[0] != 1:
+		return jsonify(status='border should have one outer ring')
+	cur.execute('select ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom) from {} where name = %s;'.format(TABLE), (line, name))
+	if cur.rowcount > 1:
+		# no use of doing anything if the polygon wasn't modified
+		geometries = []
+		for res in cur:
+			geometries.append(res[0])
+		# get disabled flag and delete old border
+		cur.execute('select disabled from {} where name = %s;'.format(TABLE), (name,))
+		disabled = cur.fetchone()[0]
+		cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+		# find untaken name series
+		base_name = name
+		found = False
+		while not found:
+			base_name = base_name + '_'
+			cur.execute('select count(1) from {} where name like %s;'.format(TABLE), (name.replace('_', '\_').replace('%', '\%') + '%',))
+			found = cur.fetchone()[0] == 0
+		# insert new geometries
+		counter = 1
+		for geom in geometries:
+			cur.execute('insert into {table} (name, geom, disabled, count_k, modified) values (%s, ST_GeomFromText(%s, 4326), %s, -1, now());'.format(table=TABLE), ('{}{}'.format(base_name, counter), geom, disabled))
+			counter = counter + 1
+		g.conn.commit()
+
+	return jsonify(status='ok')
 
 @app.route('/join')
 def join_borders():
@@ -78,7 +107,7 @@ def join_borders():
 	name = request.args.get('name')
 	name2 = request.args.get('name2')
 	cur = g.conn.cursor()
-	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from borders where name = %s) as b2 where name = %s;'.format(table=TABLE), (name2, name))
+	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from {table} where name = %s) as b2 where name = %s;'.format(table=TABLE), (name2, name))
 	cur.execute('delete from {} where name = %s;'.format(TABLE), (name2,))
 	g.conn.commit()
 	return jsonify(status='ok')
@@ -102,7 +131,7 @@ def copy_from_osm():
 	osm_id = request.args.get('id')
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, {name}, now(), -1 from {osm} o where o.osm_id = %s;'.format(table=TABLE, osm=OSM_TABLE, name='%s' if name != '' else '%s || osm_borders.name'), (name, osm_id))
+	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, {name}, now(), -1 from {osm} o where o.osm_id = %s limit 1;'.format(table=TABLE, osm=OSM_TABLE, name='%s' if name != '' else '%s || o.name'), (name, osm_id))
 	g.conn.commit()
 	return jsonify(status='ok')
 

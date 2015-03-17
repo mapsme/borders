@@ -330,7 +330,17 @@ function bSplitAgain() {
 }
 
 function bSplitDo() {
-	alert('todo!');
+	var wkt = '', lls = splitLayer.getLatLngs();
+	for( i = 0; i < lls.length; i++ ) {
+		if( i > 0 )
+			wkt += ',';
+		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
+	}
+	$.ajax(server + '/split', {
+		data: { 'name': splitSelected, 'line': 'LINESTRING(' + wkt + ')' },
+		datatype: 'json',
+		success: function(data) { if( data.status != 'ok' ) alert(data.status); else updateBorders(); }
+	});
 	bSplitCancel();
 }
 
