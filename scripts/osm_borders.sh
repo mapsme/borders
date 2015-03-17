@@ -33,16 +33,8 @@ fi
 
 # 1. Filter planet file, leaving only administrative borders (and cities)
 echo Filtering planet
-FILTERED_O5M=$(mktemp -t o5madm)
-$OSMFILTER $PLANET --keep="boundary=administrative or place=" --out-o5m -o=$FILTERED_O5M || exit 3
-
-# 1.1. Convert the result to pbf
-echo Converting to PBF
 FILTERED=$(mktemp -t osmadm)
-$OSMCONVERT $FILTERED_O5M --out-pbf -o=$FILTERED
-RET=$?
-rm $FILTERED_O5M
-[ $RET != 0 ] && exit 3
+$OSMFILTER $PLANET --keep="boundary=administrative or place=" --out-o5m -o=$FILTERED || exit 3
 
 # 2. Load filtered data into an osm2pgsql database
 echo Loading data into the database
@@ -63,7 +55,7 @@ node,way population  text linear
 EOSTYLE
 fi
 
-$OSM2PGSQL --slim --drop --style $OSM2PGSQL_STYLE -d $DATABASE -r pbf $OSM2PGSQL_KEYS $FILTERED
+$OSM2PGSQL --slim --drop --style $OSM2PGSQL_STYLE -d $DATABASE -r o5m $OSM2PGSQL_KEYS $FILTERED
 RET=$?
 rm $FILTERED
 if [ "$OSM2PGSQL_STYLE_TMP" == "1" ]; then
