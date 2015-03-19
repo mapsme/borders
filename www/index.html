@@ -54,15 +54,18 @@
 					<button onclick="bJOSM()">Открыть в JOSM</button>
 					<button onclick="bJosmZoom()">&#x1f50d;</button>
 				</div>
-				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="filefm">
-					Импорт <input type="file" accept=".osm,.xml" id="b_import" style="max-width: 100px;">
+				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
+					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();" style="max-width: 100px;">
 				</form>
+				<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>
 			</div>
 			<div id="actions" class="actions">
 				<button onclick="bDisable()" id="b_disable">Убрать</button>
 				<a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a><br>
 				<button onclick="bSplit()">Разрезать</button><br>
 				<button onclick="bJoin()">Склеить</button><br>
+				<button onclick="bLargest()">Выделить острова</button><br>
+				<button onclick="bHull()">Единый контур</button><br>
 				<div id="osm_actions">
 					<button onclick="bDivide()">Заменить регионами</button><br>
 					<button onclick="bPoint()">Регион из точки</button><br>

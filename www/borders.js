@@ -23,7 +23,7 @@ function init() {
 		$('#b_josm').css('visibility', map.getZoom() >= 8 ? 'visible' : 'hidden');
 	});
 
-	$('#filefm').target = server + '/upload';
+	document.getElementById('filefm').action = server + '/import';
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
 	checkHasOSM();
@@ -238,6 +238,27 @@ function bJosmZoom() {
 			'bottom': b.getSouth(),
 			'top': b.getNorth()
 		}
+	});
+}
+
+function bImport() {
+	document.getElementById('filefm').submit();
+	// todo: state that file is uploading somewhere
+/*	var file = document.getElementById('b_import').files[0];
+	var fr = new FileReader();
+	fr.onload = function() { bImportSend(fr.result); };
+	fr.readAsText(file);*/
+}
+
+function bImportSend(data) {
+	// todo: state that file has been sent
+	$.ajax(server + '/import', {
+		data: {
+			'file': data
+		},
+		type: 'POST',
+		datatype: 'json',
+		success: updateBorders
 	});
 }
 
@@ -506,4 +527,22 @@ function bDivideCancel() {
 	divSelected = null;
 	$('#actions').css('display', 'block');
 	$('#divide').css('display', 'none');
+}
+
+function bLargest() {
+	if( !selectedId || !(selectedId in borders) )
+		return;
+	$.ajax(server + '/chop1', {
+		data: { 'name': selectedId },
+		success: updateBorders
+	});
+}
+
+function bHull() {
+	if( !selectedId || !(selectedId in borders) )
+		return;
+	$.ajax(server + '/hull', {
+		data: { 'name': selectedId },
+		success: updateBorders
+	});
 }

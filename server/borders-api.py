@@ -3,20 +3,23 @@ from flask import Flask, g, request, json, jsonify, abort, Response
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
 import psycopg2
+from lxml import etree
 from xml.sax.saxutils import quoteattr
+import tempfile
 
 TABLE = 'borders'
 OSM_TABLE = 'osm_borders'
 READONLY = False
 
 app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 app.debug=True
 Compress(app)
 CORS(app)
 
 @app.route('/')
 def hello_world():
-	return 'Hello World!'
+	return 'Hello <b>World</b>!'
 
 @app.before_request
 def before_request():
@@ -146,6 +149,110 @@ def set_name():
 	g.conn.commit()
 	return jsonify(status='ok')
 
+@app.route('/delete')
+def delete_border():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	cur = g.conn.cursor()
+	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/disable')
+def disable_border():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	cur = g.conn.cursor()
+	cur.execute('update {} set disabled = true where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/enable')
+def enable_border():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	cur = g.conn.cursor()
+	cur.execute('update {} set disabled = false where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/comment', methods=['POST'])
+def update_comment():
+	if READONLY:
+		abort(405)
+	name = request.form['name']
+	comment = request.form['comment']
+	cur = g.conn.cursor()
+	cur.execute('update {} set cmnt = %s where name = %s;'.format(TABLE), (comment, name))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/divpreview')
+def divide_preview():
+	like = request.args.get('like')
+	query = request.args.get('query')
+	cur = g.conn.cursor()
+	cur.execute('select name, ST_AsGeoJSON(ST_Simplify(way, 0.01)) as way from {table}, (select way as pway from {table} where name like %s) r where ST_Contains(r.pway, way) and {query};'.format(table=OSM_TABLE, query=query), (like,))
+	result = []
+	for rec in cur:
+		feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]), 'properties': { 'name': rec[0] } }
+		result.append(feature)
+	return jsonify(type='FeatureCollection', features=result)
+
+@app.route('/divide')
+def divide():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	like = request.args.get('like')
+	query = request.args.get('query')
+	prefix = request.args.get('prefix')
+	if prefix != '':
+		prefix = '{}_'.format(prefix);
+	cur = g.conn.cursor()
+	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, %s || name, now(), -1 from {osm}, (select way from {osm} where name like %s) r where ST_Contains(r.way, o.way) and {query};'.format(table=TABLE, osm=OSM_TABLE, query=query), (prefix, like,))
+	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/chop1')
+def chop_largest_or_farthest():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	cur = g.conn.cursor()
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	res = cur.fetchone()
+	if not res or res[0] < 2:
+		return jsonify(status='border should have more than one outer ring')
+	cur.execute("""INSERT INTO {table} (name, disabled, modified, geom) FROM
+			(WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g FROM {table} WHERE name = %s)
+			(SELECT name||'_main', disabled, now(), ST_Area(g) AS a FROM w ORDER BY a DESC LIMIT 1)
+			UNION ALL
+			SELECT name||'_small' as name, disabled, now(), ST_Area(ST_Collect(g)) AS a
+			FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
+			GROUP BY name, disabled);""".format(table=TABLE), (name,))
+	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/hull')
+def draw_hull():
+	if READONLY:
+		abort(405)
+	name = request.args.get('name')
+	cur = g.conn.cursor()
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	res = cur.fetchone()
+	if not res or res[0] < 2:
+		return jsonify(status='border should have more than one outer ring')
+	cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(TABLE), (name,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
 @app.route('/josm')
 def make_osm():
 	xmin = request.args.get('xmin')
@@ -220,82 +327,140 @@ def parse_polygon(node_pool, rings, polygon):
 		rings.append([role, nodes])
 		role = 'inner'
 
-@app.route('/import')
+def import_error(msg):
+	#return '<script>alert("{}");</script>'.format(msg)
+	return jsonify(status=msg)
+
+def extend_bbox(bbox, x, y):
+	bbox[0] = min(bbox[0], x)
+	bbox[1] = min(bbox[1], y)
+	bbox[2] = max(bbox[2], x)
+	bbox[3] = max(bbox[3], y)
+
+def bbox_contains(outer, inner):
+	return outer[0] <= inner[0] and outer[1] <= inner[1] and outer[2] >= inner[2] and outer[3] >= inner[3]
+
+@app.route('/import', methods=['POST'])
 def import_osm():
 	if READONLY:
 		abort(405)
-	# todo: read file and reconstruct geometries for modified polygons
-	# todo: update borders set geom = ...
-	pass
+	f = request.files['file']
+	if not f:
+		return import_error('failed upload')
+	try:
+		tree = etree.parse(f)
+	except:
+		return import_error('malformed xml document')
+	if not tree:
+		return import_error('bad document')
+	root = tree.getroot()
 
-@app.route('/delete')
-def delete_border():
-	if READONLY:
-		abort(405)
-	name = request.args.get('name')
+	# read nodes and ways
+	nodes = {} # id: { lat, lon, modified }
+	for node in root.iter('node'):
+		modified = int(node.get('id')) < 0 or node.get('action') == 'modify'
+		nodes[node.get('id')] = { 'lat': float(node.get('lat')), 'lon': float(node.get('lon')), 'modified': modified }
+	ways = {} # id: { name, disabled, modified, bbox, wkt, used }
+	for way in root.iter('way'):
+		way_nodes = []
+		bbox = [1e4, 1e4, -1e4, -1e4]
+		modified = int(way.get('id')) < 0 or way.get('action') == 'modify'
+		for node in way.iter('nd'):
+			ref = node.get('ref')
+			if not ref in nodes:
+				return import_error('missing node {} in way {}'.format(ref, way.get('id')))
+			way_nodes.append('{} {}'.format(nodes[ref]['lon'], nodes[ref]['lat']))
+			if nodes[ref]['modified']:
+				modified = True
+			extend_bbox(bbox, float(nodes[ref]['lon']), float(nodes[ref]['lat']))
+		name = None
+		disabled = False
+		for tag in way.iter('tag'):
+			if tag.get('k') == 'name':
+				name = tag.get('v')
+			if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
+				disabled = True
+		if len(way_nodes) < 3:
+			return import_error('way with less than 3 nodes: {}'.format(way.get('id')))
+		if way_nodes[0] != way_nodes[-1]:
+			return import_error('non-closed way: {}'.format(way.get('id')))
+		ways[way.get('id')] = { 'name': name, 'disabled': disabled, 'modified': modified, 'bbox': bbox, 'wkt': '({})'.format(','.join(way_nodes)), 'used': False }
+
+	# finally we are constructing regions: first, from multipolygons
+	regions = {} # name: { modified, disabled, wkt }
+	for rel in root.iter('relation'):
+		modified = int(rel.get('id')) < 0 or rel.get('action') == 'modify'
+		name = None
+		disabled = False
+		multi = False
+		inner = []
+		outer = []
+		for tag in rel.iter('tag'):
+			if tag.get('k') == 'name':
+				name = tag.get('v')
+			if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
+				disabled = True
+			if tag.get('k') == 'type' and tag.get('v') == 'multipolygon':
+				multi = True
+		if not multi:
+			return import_error('found non-multipolygon relation: {}',format(rel.get('id')))
+		if not name:
+			return import_error('relation {} has no name'.format(rel.get('id')))
+		if name in regions:
+			return import_error('multiple relations with the same name {}',format(name))
+		for member in rel.iter('member'):
+			ref = member.get('ref')
+			if not ref in ways:
+				return import_error('missing way {} in relation {}'.format(ref, rel.get('id')))
+			if ways[ref]['modified']:
+				modified = True
+			role = member.get('role')
+			if role == 'outer':
+				outer.append((ways[ref]['bbox'], ways[ref]['wkt']))
+			elif role == 'inner':
+				inner.append((ways[ref]['bbox'], ways[ref]['wkt']))
+			else:
+				return import_error('unknown role {} in relation {}'.format(role, rel.get('id')))
+			ways[ref]['used'] = True
+		polygons = []
+		for bbox, wkt in outer:
+			rings = [wkt]
+			for i in range(len(inner)-1, 0, -1):
+				if bbox_contains(bbox, inner[i][0]):
+					rings.append(inner[i][1])
+					del inner[i]
+			polygons.append('({})'.format(','.join(rings)))
+		regions[name] = { 'modified': modified, 'disabled': disabled, 'wkt': 'MULTIPOLYGON({})'.format(','.join(polygons)) }
+
+	# make regions from unused named ways
+	for wid, way in ways.iteritems():
+		if w['used']:
+			continue
+		if not w['name']:
+			return import_error('unused in multipolygon way with no name: {}'.format(wid))
+		if w['name'] in regions:
+			return import_error('way {} has the same name as other way/multipolygon'.format(wid))
+		regions[w['name']] = { 'modified': w['modified'], 'disabled': w['disabled'], 'wkt': 'POLYGON({})'.format(w['wkt']) }
+
+	# submit modifications to the database
 	cur = g.conn.cursor()
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+	added = 0
+	updated = 0
+	for name, region in regions.iteritems():
+		if not region['modified']:
+			continue
+		cur.execute('select count(1) from {} where name = %s'.format(TABLE), (name,))
+		res = cur.fetchone()
+		if res and res[0] > 0:
+			# update
+			cur.execute('update {table} set disabled = %s, geom = ST_GeomFromText(%s, 4326), modified = now(), count_k = -1 where name = %s'.format(table=TABLE), (region['disabled'], region['wkt'], name))
+			updated = updated + 1
+		else:
+			# create
+			cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, %s, now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
+			added = added + 1
 	g.conn.commit()
-	return jsonify(status='ok')
-
-@app.route('/disable')
-def disable_border():
-	if READONLY:
-		abort(405)
-	name = request.args.get('name')
-	cur = g.conn.cursor()
-	cur.execute('update {} set disabled = true where name = %s;'.format(TABLE), (name,))
-	g.conn.commit()
-	return jsonify(status='ok')
-
-@app.route('/enable')
-def enable_border():
-	if READONLY:
-		abort(405)
-	name = request.args.get('name')
-	cur = g.conn.cursor()
-	cur.execute('update {} set disabled = false where name = %s;'.format(TABLE), (name,))
-	g.conn.commit()
-	return jsonify(status='ok')
-
-@app.route('/comment', methods=['POST'])
-def update_comment():
-	if READONLY:
-		abort(405)
-	name = request.form['name']
-	comment = request.form['comment']
-	cur = g.conn.cursor()
-	cur.execute('update {} set cmnt = %s where name = %s;'.format(TABLE), (comment, name))
-	g.conn.commit()
-	return jsonify(status='ok')
-
-@app.route('/divpreview')
-def divide_preview():
-	like = request.args.get('like')
-	query = request.args.get('query')
-	cur = g.conn.cursor()
-	cur.execute('select name, ST_AsGeoJSON(ST_Simplify(way, 0.01)) as way from {table}, (select way as pway from {table} where name like %s) r where ST_Contains(r.pway, way) and {query};'.format(table=OSM_TABLE, query=query), (like,))
-	result = []
-	for rec in cur:
-		feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]), 'properties': { 'name': rec[0] } }
-		result.append(feature)
-	return jsonify(type='FeatureCollection', features=result)
-
-@app.route('/divide')
-def divide():
-	if READONLY:
-		abort(405)
-	name = request.args.get('name')
-	like = request.args.get('like')
-	query = request.args.get('query')
-	prefix = request.args.get('prefix')
-	if prefix != '':
-		prefix = '{}_'.format(prefix);
-	cur = g.conn.cursor()
-	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, %s || name, now(), -1 from {osm}, (select way from {osm} where name like %s) r where ST_Contains(r.way, o.way) and {query};'.format(table=TABLE, osm=OSM_TABLE, query=query), (prefix, like,))
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
-	g.conn.commit()
-	return jsonify(status='ok')
+	return jsonify(regions=len(regions), added=added, updated=updated)
 
 if __name__ == '__main__':
 	app.run(threaded=True)
