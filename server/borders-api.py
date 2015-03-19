@@ -5,14 +5,12 @@ from flask.ext.compress import Compress
 import psycopg2
 from lxml import etree
 from xml.sax.saxutils import quoteattr
-import tempfile
 
 TABLE = 'borders'
 OSM_TABLE = 'osm_borders'
 READONLY = False
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 app.debug=True
 Compress(app)
 CORS(app)
@@ -228,13 +226,16 @@ def chop_largest_or_farthest():
 	res = cur.fetchone()
 	if not res or res[0] < 2:
 		return jsonify(status='border should have more than one outer ring')
-	cur.execute("""INSERT INTO {table} (name, disabled, modified, geom) FROM
+	cur.execute("""INSERT INTO {table} (name, disabled, modified, geom)
+			SELECT name, disabled, modified, geom from
+			(
 			(WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g FROM {table} WHERE name = %s)
-			(SELECT name||'_main', disabled, now(), ST_Area(g) AS a FROM w ORDER BY a DESC LIMIT 1)
+			(SELECT name||'_main' as name, disabled, now() as modified, g as geom, ST_Area(g) as a FROM w ORDER BY a DESC LIMIT 1)
 			UNION ALL
-			SELECT name||'_small' as name, disabled, now(), ST_Area(ST_Collect(g)) AS a
+			SELECT name||'_small' as name, disabled, now() as modified, ST_Collect(g) AS geom, ST_Area(ST_Collect(g)) as a
 			FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
-			GROUP BY name, disabled);""".format(table=TABLE), (name,))
+			GROUP BY name, disabled)
+			) x;""".format(table=TABLE), (name,))
 	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
