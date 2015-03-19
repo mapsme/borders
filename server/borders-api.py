@@ -298,6 +298,7 @@ def make_osm():
 			# multipolygon
 			rxml = '<relation id="{id}" visible="true" version="1">'.format(id=wrid)
 			wrid = wrid + 1
+			rxml = rxml + '<tag k="type" v="multipolygon" />'
 			rxml = rxml + '<tag k="name" v={} />'.format(quoteattr(region['name']))
 			if region['disabled']:
 				rxml = rxml + '<tag k="disabled" v="yes" />'
@@ -359,10 +360,14 @@ def import_osm():
 	# read nodes and ways
 	nodes = {} # id: { lat, lon, modified }
 	for node in root.iter('node'):
+		if node.get('action') == 'delete':
+			continue
 		modified = int(node.get('id')) < 0 or node.get('action') == 'modify'
 		nodes[node.get('id')] = { 'lat': float(node.get('lat')), 'lon': float(node.get('lon')), 'modified': modified }
 	ways = {} # id: { name, disabled, modified, bbox, wkt, used }
 	for way in root.iter('way'):
+		if way.get('action') == 'delete':
+			continue
 		way_nodes = []
 		bbox = [1e4, 1e4, -1e4, -1e4]
 		modified = int(way.get('id')) < 0 or way.get('action') == 'modify'
@@ -404,11 +409,11 @@ def import_osm():
 			if tag.get('k') == 'type' and tag.get('v') == 'multipolygon':
 				multi = True
 		if not multi:
-			return import_error('found non-multipolygon relation: {}',format(rel.get('id')))
+			return import_error('found non-multipolygon relation: {}'.format(rel.get('id')))
 		if not name:
 			return import_error('relation {} has no name'.format(rel.get('id')))
 		if name in regions:
-			return import_error('multiple relations with the same name {}',format(name))
+			return import_error('multiple relations with the same name {}'.format(name))
 		for member in rel.iter('member'):
 			ref = member.get('ref')
 			if not ref in ways:
@@ -423,6 +428,9 @@ def import_osm():
 			else:
 				return import_error('unknown role {} in relation {}'.format(role, rel.get('id')))
 			ways[ref]['used'] = True
+		# after parsing ways, so 'used' flag is set
+		if rel.get('action') == 'delete':
+			continue
 		polygons = []
 		for bbox, wkt in outer:
 			rings = [wkt]
@@ -434,7 +442,7 @@ def import_osm():
 		regions[name] = { 'modified': modified, 'disabled': disabled, 'wkt': 'MULTIPOLYGON({})'.format(','.join(polygons)) }
 
 	# make regions from unused named ways
-	for wid, way in ways.iteritems():
+	for wid, w in ways.iteritems():
 		if w['used']:
 			continue
 		if not w['name']:
