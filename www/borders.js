@@ -61,9 +61,6 @@ function processResult(data) {
 		}
 	}
 
-	if( tooSmallLayer != null )
-		tooSmallLayer.clearLayers();
-
 	for( var f = 0; f < data.features.length; f++ ) {
 		var layer = L.GeoJSON.geometryToLayer(data.features[f].geometry),
 		    props = data.features[f].properties;
@@ -75,6 +72,37 @@ function processResult(data) {
 		selectLayer({ target: borders[selectedId].layer });
 	} else {
 		selectLayer(null);
+	}
+
+	if( tooSmallLayer != null ) {
+		tooSmallLayer.clearLayers();
+		var b = map.getBounds();
+		$.ajax(server + '/small', {
+			data: {
+				'xmin': b.getWest(),
+				'xmax': b.getEast(),
+				'ymin': b.getSouth(),
+				'ymax': b.getNorth()
+			},
+			success: processTooSmall,
+			dataType: 'json'
+		});
+	}
+}
+
+function processTooSmall(data) {
+	if( tooSmallLayer == null || !data || !('features' in data) )
+		return;
+	tooSmallLayer.clearLayers();
+	var i, pt, tsm;
+	for( i = 0; i < data.features.length; i++ ) {
+		pt = data.features[i];
+		if( pt.name in borders ) {
+			tsm = L.marker([pt.lat, pt.lon], { title: pt.name + '\n' + 'Площадь: ' + L.Util.formatNum(pt.area / 1000000, 2) + ' км²' });
+			tsm.pLayer = borders[pt.name].layer;
+			tsm.on('click', selectLayer);
+			tooSmallLayer.addLayer(tsm);
+		}
 	}
 }
 
@@ -88,12 +116,6 @@ function updateBorder(id, layer, props) {
 	borders[id].layer = layer;
 	layer.id = id;
 	bordersLayer.addLayer(layer);
-	if( tooSmallLayer != null && props['area'] < KM2_AREA_TOO_SMALL * 1000000 ) {
-		var tsm = L.marker(layer.getBounds().getCenter());
-		tsm.pLayer = layer;
-		tsm.on('click', selectLayer);
-		tooSmallLayer.addLayer(tsm);
-	}
 	layer.setStyle(STYLE_BORDER);
 	if( borders[id]['disabled'] )
 		layer.setStyle({ fillOpacity: 0.01 });
@@ -243,23 +265,6 @@ function bJosmZoom() {
 
 function bImport() {
 	document.getElementById('filefm').submit();
-	// todo: state that file is uploading somewhere
-/*	var file = document.getElementById('b_import').files[0];
-	var fr = new FileReader();
-	fr.onload = function() { bImportSend(fr.result); };
-	fr.readAsText(file);*/
-}
-
-function bImportSend(data) {
-	// todo: state that file has been sent
-	$.ajax(server + '/import', {
-		data: {
-			'file': data
-		},
-		type: 'POST',
-		datatype: 'json',
-		success: updateBorders
-	});
 }
 
 function bShowRename() {

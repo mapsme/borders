@@ -11,7 +11,7 @@ OSM_TABLE = 'osm_borders'
 READONLY = False
 
 app = Flask(__name__)
-app.debug=True
+#app.debug=True
 Compress(app)
 CORS(app)
 
@@ -50,6 +50,25 @@ def query_bbox():
 		feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]), 'properties': props }
 		result.append(feature)
 	return jsonify(type='FeatureCollection', features=result)
+
+@app.route('/small')
+def query_small_in_bbox():
+	xmin = request.args.get('xmin')
+	xmax = request.args.get('xmax')
+	ymin = request.args.get('ymin')
+	ymax = request.args.get('ymax')
+	cur = g.conn.cursor()
+	cur.execute('''SELECT name, round(ST_Area(geography(ring))) as area, ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
+		FROM (
+			SELECT name, (ST_Dump(geom)).geom as ring
+			FROM {table}
+			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
+		) g
+		WHERE ST_Area(geography(ring)) < 1000000;'''.format(table=TABLE), (xmin, ymin, xmax, ymax))
+	result = []
+	for rec in cur:
+		result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
+	return jsonify(features=result)
 
 @app.route('/hasosm')
 def check_osm_table():
@@ -261,7 +280,7 @@ def make_osm():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	cur = g.conn.cursor()
-	cur.execute('SELECT name, disabled, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s));'.format(table=TABLE), (xmin, ymin, xmax, ymax))
+	cur.execute('SELECT name, disabled, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE ST_Intersects(ST_SetSRID(ST_Buffer(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 0.3), 4326), geom);'.format(table=TABLE), (xmin, ymin, xmax, ymax))
 
 	node_pool = { 'id': 1 } # 'lat_lon': id
 	regions = [] # { name: name, rings: [['outer', [ids]], ['inner', [ids]], ...] }
@@ -283,9 +302,12 @@ def make_osm():
 			xml = xml + '<node id="{id}" visible="true" version="1" lat="{lat}" lon="{lon}" />'.format(id=node_id, lat=lat, lon=lon)
 
 	wrid = 1
+	ways = {} # json: id
 	for region in regions:
-		if len(region['rings']) == 1:
+		w1key = ring_hash(region['rings'][0][1])
+		if len(region['rings']) == 1 and w1key not in ways:
 			# simple case: a way
+			ways[w1key] = wrid
 			xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
 			xml = xml + '<tag k="name" v={} />'.format(quoteattr(region['name']))
 			if region['disabled']:
@@ -303,15 +325,25 @@ def make_osm():
 			if region['disabled']:
 				rxml = rxml + '<tag k="disabled" v="yes" />'
 			for ring in region['rings']:
-				xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
-				rxml = rxml + '<member type="way" ref="{ref}" role="{role}" />'.format(ref=wrid, role=ring[0])
-				for nd in ring[1]:
-					xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
-				xml = xml + '</way>'
-				wrid = wrid + 1
+				wkey = ring_hash(ring[1])
+				if wkey in ways:
+					# already have that way
+					rxml = rxml + '<member type="way" ref="{ref}" role="{role}" />'.format(ref=ways[wkey], role=ring[0])
+				else:
+					ways[wkey] = wrid
+					xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
+					rxml = rxml + '<member type="way" ref="{ref}" role="{role}" />'.format(ref=wrid, role=ring[0])
+					for nd in ring[1]:
+						xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
+					xml = xml + '</way>'
+					wrid = wrid + 1
 			xml = xml + rxml + '</relation>'
 	xml = xml + '</osm>'
 	return Response(xml, mimetype='application/x-osm+xml')
+
+def ring_hash(refs):
+	#return json.dumps(refs)
+	return hash(tuple(sorted(refs)))
 
 def parse_polygon(node_pool, rings, polygon):
 	role = 'outer'
