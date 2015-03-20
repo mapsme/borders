@@ -295,7 +295,7 @@ def make_osm():
 		if len(rings) > 0:
 			regions.append({ 'name': rec[0], 'disabled': rec[1], 'rings': rings })
 	
-	xml = '<?xml version="1.0" encoding="UTF-8"?><osm version="0.6">'
+	xml = '<?xml version="1.0" encoding="UTF-8"?><osm version="0.6" upload="false">'
 	for latlon, node_id in node_pool.items():
 		if latlon != 'id':
 			(lat, lon) = latlon.split()
@@ -361,15 +361,39 @@ def parse_polygon(node_pool, rings, polygon):
 		rings.append([role, nodes])
 		role = 'inner'
 
-def import_error(msg):
-	#return '<script>alert("{}");</script>'.format(msg)
-	return jsonify(status=msg)
+def append_way(way, way2):
+	another = list(way2) # make copy to not modify original list
+	if way[0] == way[-1] or another[0] == another[-1]:
+		return None
+	if way[0] == another[0] or way[-1] == another[-1]:
+		another.reverse()
+	if way[-1] == another[0]:
+		result = list(way)
+		result.extend(another[1:])
+		return result
+	elif way[0] == another[-1]:
+		result = another
+		result.extend(way)
+		return result
+	return None
 
-def extend_bbox(bbox, x, y):
-	bbox[0] = min(bbox[0], x)
-	bbox[1] = min(bbox[1], y)
-	bbox[2] = max(bbox[2], x)
-	bbox[3] = max(bbox[3], y)
+def way_to_wkt(node_pool, refs):
+	coords = []
+	for nd in refs:
+		coords.append('{} {}'.format(node_pool[nd]['lon'], node_pool[nd]['lat']))
+	return '({})'.format(','.join(coords))
+
+def import_error(msg):
+	return '<script>alert("{}");</script>'.format(msg)
+	#return jsonify(status=msg)
+
+def extend_bbox(bbox, x, y=None):
+	if y is not None:
+		x = [x, y, x, y]
+	bbox[0] = min(bbox[0], x[0])
+	bbox[1] = min(bbox[1], x[1])
+	bbox[2] = max(bbox[2], x[2])
+	bbox[3] = max(bbox[3], x[3])
 
 def bbox_contains(outer, inner):
 	return outer[0] <= inner[0] and outer[1] <= inner[1] and outer[2] >= inner[2] and outer[3] >= inner[3]
@@ -396,7 +420,7 @@ def import_osm():
 			continue
 		modified = int(node.get('id')) < 0 or node.get('action') == 'modify'
 		nodes[node.get('id')] = { 'lat': float(node.get('lat')), 'lon': float(node.get('lon')), 'modified': modified }
-	ways = {} # id: { name, disabled, modified, bbox, wkt, used }
+	ways = {} # id: { name, disabled, modified, bbox, nodes, used }
 	for way in root.iter('way'):
 		if way.get('action') == 'delete':
 			continue
@@ -407,7 +431,7 @@ def import_osm():
 			ref = node.get('ref')
 			if not ref in nodes:
 				return import_error('missing node {} in way {}'.format(ref, way.get('id')))
-			way_nodes.append('{} {}'.format(nodes[ref]['lon'], nodes[ref]['lat']))
+			way_nodes.append(ref)
 			if nodes[ref]['modified']:
 				modified = True
 			extend_bbox(bbox, float(nodes[ref]['lon']), float(nodes[ref]['lat']))
@@ -418,11 +442,9 @@ def import_osm():
 				name = tag.get('v')
 			if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
 				disabled = True
-		if len(way_nodes) < 3:
-			return import_error('way with less than 3 nodes: {}'.format(way.get('id')))
-		if way_nodes[0] != way_nodes[-1]:
-			return import_error('non-closed way: {}'.format(way.get('id')))
-		ways[way.get('id')] = { 'name': name, 'disabled': disabled, 'modified': modified, 'bbox': bbox, 'wkt': '({})'.format(','.join(way_nodes)), 'used': False }
+		if len(way_nodes) < 2:
+			return import_error('way with less than 2 nodes: {}'.format(way.get('id')))
+		ways[way.get('id')] = { 'name': name, 'disabled': disabled, 'modified': modified, 'bbox': bbox, 'nodes': way_nodes, 'used': False }
 
 	# finally we are constructing regions: first, from multipolygons
 	regions = {} # name: { modified, disabled, wkt }
@@ -454,21 +476,52 @@ def import_osm():
 				modified = True
 			role = member.get('role')
 			if role == 'outer':
-				outer.append((ways[ref]['bbox'], ways[ref]['wkt']))
+				outer.append(ways[ref])
 			elif role == 'inner':
-				inner.append((ways[ref]['bbox'], ways[ref]['wkt']))
+				inner.append(ways[ref])
 			else:
 				return import_error('unknown role {} in relation {}'.format(role, rel.get('id')))
 			ways[ref]['used'] = True
 		# after parsing ways, so 'used' flag is set
 		if rel.get('action') == 'delete':
 			continue
+		# reconstruct rings in multipolygon
+		for multi in (inner, outer):
+			i = 0
+			while i < len(multi):
+				way = multi[i]['nodes']
+				while way[0] != way[-1]:
+					print 'Extending way of {} nodes; start={}, end={}'.format(len(way), way[0], way[-1])
+					productive = False
+					j = i + 1
+					while way[0] != way[-1] and j < len(multi):
+						print 'maybe way with start={}, end={}?'.format(multi[j]['nodes'][0], multi[j]['nodes'][-1])
+						# todo: do not modify source way!!!
+						new_way = append_way(way, multi[j]['nodes'])
+						if new_way:
+							multi[i] = dict(multi[i])
+							multi[i]['nodes'] = new_way
+							way = new_way
+							print 'now {} nodes; start={}, end={}'.format(len(way), way[0], way[-1])
+							if multi[j]['modified']:
+								multi[i]['modified'] = True
+							extend_bbox(multi[i]['bbox'], multi[j]['bbox'])
+							del multi[j]
+							productive = True
+						else:
+							j = j + 1
+					if not productive:
+						return import_error('unconnected way in relation {}'.format(rel.get('id')))
+				i = i + 1
+		for way in outer:
+			print 'Relation {}: outer way of {} nodes: {}-{}'.format(rel.get('id'), len(way['nodes']), way['nodes'][0], way['nodes'][-1])
+		# sort inner and outer rings
 		polygons = []
-		for bbox, wkt in outer:
-			rings = [wkt]
+		for way in outer:
+			rings = [way_to_wkt(nodes, way['nodes'])]
 			for i in range(len(inner)-1, 0, -1):
-				if bbox_contains(bbox, inner[i][0]):
-					rings.append(inner[i][1])
+				if bbox_contains(way['bbox'], inner[i]['bbox']):
+					rings.append(way_to_wkt(nodes, inner[i]['nodes']))
 					del inner[i]
 			polygons.append('({})'.format(','.join(rings)))
 		regions[name] = { 'modified': modified, 'disabled': disabled, 'wkt': 'MULTIPOLYGON({})'.format(','.join(polygons)) }
@@ -479,9 +532,11 @@ def import_osm():
 			continue
 		if not w['name']:
 			return import_error('unused in multipolygon way with no name: {}'.format(wid))
+		if w['nodes'][0] != w['nodes'][-1]:
+			return import_error('non-closed unused in multipolygon way: {}'.format(way.get('id')))
 		if w['name'] in regions:
 			return import_error('way {} has the same name as other way/multipolygon'.format(wid))
-		regions[w['name']] = { 'modified': w['modified'], 'disabled': w['disabled'], 'wkt': 'POLYGON({})'.format(w['wkt']) }
+		regions[w['name']] = { 'modified': w['modified'], 'disabled': w['disabled'], 'wkt': 'POLYGON({})'.format(way_to_wkt(nodes, w['nodes'])) }
 
 	# submit modifications to the database
 	cur = g.conn.cursor()
