@@ -65,7 +65,7 @@ fi
 
 # 3. Make osm_borders table
 echo Creating osm_borders table
-psql $DATABASE -c "drop table if exists osm_borders; create table osm_borders as select min(osm_id) as osm_id, ST_Transform(ST_Collect(way),4326) as way, admin_level::int as admin_level, coalesce(max(\"name:en\"), name) as name from planet_osm_polygon where boundary='administrative' and admin_level in ('2', '3', '4', '5', '6') group by name, admin_level;" || exit 3
+psql $DATABASE -c "drop table if exists osm_borders; create table osm_borders as select min(osm_id) as osm_id, ST_Buffer(ST_Transform(ST_Collect(way),4326), 0) as way, admin_level::int as admin_level, coalesce(max(\"name:en\"), name) as name from planet_osm_polygon where boundary='administrative' and admin_level in ('2', '3', '4', '5', '6') group by name, admin_level;" || exit 3
 
 # 4. Copy it to the borders database
 echo Copying osm_borders table to the borders database

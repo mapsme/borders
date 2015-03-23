@@ -2,12 +2,13 @@
 from flask import Flask, g, request, json, jsonify, abort, Response
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
-import psycopg2
 from lxml import etree
 from xml.sax.saxutils import quoteattr
+import psycopg2
 
 TABLE = 'borders'
 OSM_TABLE = 'osm_borders'
+BACKUP = 'borders_backup'
 READONLY = False
 
 app = Flask(__name__)
@@ -230,7 +231,13 @@ def divide():
 	if prefix != '':
 		prefix = '{}_'.format(prefix);
 	cur = g.conn.cursor()
-	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, %s || name, now(), -1 from {osm}, (select way from {osm} where name like %s) r where ST_Contains(r.way, o.way) and {query};'.format(table=TABLE, osm=OSM_TABLE, query=query), (prefix, like,))
+	cur.execute('''insert into {table} (geom, name, modified, count_k)
+		select o.way as way, %s || name, now(), -1
+		from {osm} o, (
+			select way from {osm} where name like %s
+		) r
+		where ST_Contains(r.way, o.way) and {query};
+		'''.format(table=TABLE, osm=OSM_TABLE, query=query), (prefix, like,))
 	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
@@ -272,6 +279,39 @@ def draw_hull():
 	cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
+
+@app.route('/backup')
+def backup_do():
+	cur = g.conn.cursor()
+	cur.execute("SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup) from {};".format(BACKUP))
+	(timestamp, tsmax) = cur.fetchone()
+	if timestamp == tsmax:
+		return jsonify(status='please try again later')
+	cur.execute('INSERT INTO {backup} (backup, name, geom, disabled, count_k, modified, cmnt) SELECT %s, name, geom, disabled, count_k, modified, cmnt from {table};'.format(backup=BACKUP, table=TABLE), (timestamp,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/restore')
+def backup_restore():
+	ts = request.args.get('timestamp')
+	cur = g.conn.cursor()
+	cur.execute('SELECT count(1) from {} where backup = %s;'.format(BACKUP), (ts,))
+	(count,) = cur.fetchone()
+	if count <= 0:
+		return jsonify(status='no such timestamp')
+	cur.execute('DELETE FROM {};'.format(TABLE))
+	cur.execute('INSERT INTO {table} (name, geom, disabled, count_k, modified, cmnt) SELECT name, geom, disabled, count_k, modified, cmnt from {backup} where backup = %s;'.format(backup=BACKUP, table=TABLE), (ts,))
+	g.conn.commit()
+	return jsonify(status='ok')
+
+@app.route('/backlist')
+def backup_list():
+	cur = g.conn.cursor()
+	cur.execute("SELECT backup, count(1) from {} group by backup order by backup desc;".format(BACKUP))
+	result = []
+	for res in cur:
+		result.append({ 'timestamp': res[0], 'text': res[0], 'count': res[1] })
+	return jsonify(backups=result)
 
 @app.route('/josm')
 def make_osm():
@@ -496,7 +536,6 @@ def import_osm():
 					j = i + 1
 					while way[0] != way[-1] and j < len(multi):
 						print 'maybe way with start={}, end={}?'.format(multi[j]['nodes'][0], multi[j]['nodes'][-1])
-						# todo: do not modify source way!!!
 						new_way = append_way(way, multi[j]['nodes'])
 						if new_way:
 							multi[i] = dict(multi[i])
@@ -553,7 +592,7 @@ def import_osm():
 			updated = updated + 1
 		else:
 			# create
-			cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, %s, now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
+			cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, ST_GeomFromText(%s, 4326), now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
 			added = added + 1
 	g.conn.commit()
 	return jsonify(regions=len(regions), added=added, updated=updated)
