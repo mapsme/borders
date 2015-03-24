@@ -11,6 +11,8 @@ OSM_TABLE = 'osm_borders'
 BACKUP = 'borders_backup'
 READONLY = False
 
+JOSM_FORCE_MULTI = True
+
 app = Flask(__name__)
 #app.debug=True
 Compress(app)
@@ -44,7 +46,13 @@ def query_bbox():
 	else:
 		simplify = 0
 	cur = g.conn.cursor()
-	cur.execute('SELECT name, ST_AsGeoJSON({geom}, 7) as geometry, ST_NPoints(geom), modified, disabled, count_k, cmnt, round(ST_Area(geography(geom))) as area FROM {table} WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s));'.format(table=TABLE, geom='ST_SimplifyPreserveTopology(geom, {})'.format(simplify) if simplify > 0 else 'geom'), (xmin, ymin, xmax, ymax))
+	cur.execute('''SELECT name, ST_AsGeoJSON({geom}, 7) as geometry, ST_NPoints(geom),
+		modified, disabled, count_k, cmnt, round(ST_Area(geography(geom))) as area
+		FROM {table}
+		WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
+		order by area desc;
+		'''.format(table=TABLE, geom='ST_SimplifyPreserveTopology(geom, {})'.format(simplify) if simplify > 0 else 'geom'),
+		(xmin, ymin, xmax, ymax))
 	result = []
 	for rec in cur:
 		props = { 'name': rec[0], 'nodes': rec[2], 'modified': rec[3], 'disabled': rec[4], 'count_k': rec[5], 'comment': rec[6], 'area': rec[7] }
@@ -345,7 +353,7 @@ def make_osm():
 	ways = {} # json: id
 	for region in regions:
 		w1key = ring_hash(region['rings'][0][1])
-		if len(region['rings']) == 1 and w1key not in ways:
+		if not JOSM_FORCE_MULTI and len(region['rings']) == 1 and w1key not in ways:
 			# simple case: a way
 			ways[w1key] = wrid
 			xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
@@ -525,23 +533,22 @@ def import_osm():
 		# after parsing ways, so 'used' flag is set
 		if rel.get('action') == 'delete':
 			continue
+		if len(outer) == 0:
+			return import_error('relation {} has no outer ways'.format(rel.get('id')))
 		# reconstruct rings in multipolygon
 		for multi in (inner, outer):
 			i = 0
 			while i < len(multi):
 				way = multi[i]['nodes']
 				while way[0] != way[-1]:
-					print 'Extending way of {} nodes; start={}, end={}'.format(len(way), way[0], way[-1])
 					productive = False
 					j = i + 1
 					while way[0] != way[-1] and j < len(multi):
-						print 'maybe way with start={}, end={}?'.format(multi[j]['nodes'][0], multi[j]['nodes'][-1])
 						new_way = append_way(way, multi[j]['nodes'])
 						if new_way:
 							multi[i] = dict(multi[i])
 							multi[i]['nodes'] = new_way
 							way = new_way
-							print 'now {} nodes; start={}, end={}'.format(len(way), way[0], way[-1])
 							if multi[j]['modified']:
 								multi[i]['modified'] = True
 							extend_bbox(multi[i]['bbox'], multi[j]['bbox'])
@@ -552,8 +559,6 @@ def import_osm():
 					if not productive:
 						return import_error('unconnected way in relation {}'.format(rel.get('id')))
 				i = i + 1
-		for way in outer:
-			print 'Relation {}: outer way of {} nodes: {}-{}'.format(rel.get('id'), len(way['nodes']), way['nodes'][0], way['nodes'][-1])
 		# sort inner and outer rings
 		polygons = []
 		for way in outer:
