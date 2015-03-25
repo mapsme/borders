@@ -8,9 +8,10 @@ import psycopg2
 
 TABLE = 'borders'
 OSM_TABLE = 'osm_borders'
+OTHER_TABLES = { 'old': 'old_borders' }
 BACKUP = 'borders_backup'
 READONLY = False
-
+SMALL_KM2 = 10
 JOSM_FORCE_MULTI = True
 
 app = Flask(__name__)
@@ -45,13 +46,20 @@ def query_bbox():
 		simplify = 0.01
 	else:
 		simplify = 0
+	table = request.args.get('table')
+	if table in OTHER_TABLES:
+		table = OTHER_TABLES[table]
+	else:
+		table = TABLE
+
 	cur = g.conn.cursor()
-	cur.execute('''SELECT name, ST_AsGeoJSON({geom}, 7) as geometry, ST_NPoints(geom),
-		modified, disabled, count_k, cmnt, round(ST_Area(geography(geom))) as area
+	cur.execute("""SELECT name, ST_AsGeoJSON({geom}, 7) as geometry, ST_NPoints(geom),
+		modified, disabled, count_k, cmnt,
+		round(CASE WHEN ST_Area(geography(geom)) = 'NaN' THEN 0 ELSE ST_Area(geography(geom)) END) as area
 		FROM {table}
 		WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
 		order by area desc;
-		'''.format(table=TABLE, geom='ST_SimplifyPreserveTopology(geom, {})'.format(simplify) if simplify > 0 else 'geom'),
+		""".format(table=table, geom='ST_SimplifyPreserveTopology(geom, {})'.format(simplify) if simplify > 0 else 'geom'),
 		(xmin, ymin, xmax, ymax))
 	result = []
 	for rec in cur:
@@ -66,6 +74,11 @@ def query_small_in_bbox():
 	xmax = request.args.get('xmax')
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
+	table = request.args.get('table')
+	if table in OTHER_TABLES:
+		table = OTHER_TABLES[table]
+	else:
+		table = TABLE
 	cur = g.conn.cursor()
 	cur.execute('''SELECT name, round(ST_Area(geography(ring))) as area, ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
 		FROM (
@@ -73,23 +86,35 @@ def query_small_in_bbox():
 			FROM {table}
 			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
 		) g
-		WHERE ST_Area(geography(ring)) < 1000000;'''.format(table=TABLE), (xmin, ymin, xmax, ymax))
+		WHERE ST_Area(geography(ring)) < %s;'''.format(table=table), (xmin, ymin, xmax, ymax, SMALL_KM2 * 1000000))
 	result = []
 	for rec in cur:
 		result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
 	return jsonify(features=result)
 
-@app.route('/hasosm')
+@app.route('/tables')
 def check_osm_table():
-	res = False
+	table = request.args.get('table')
+	if table in OTHER_TABLES:
+		table = OTHER_TABLES[table]
+	else:
+		table = TABLE
+	osm = False
+	old = False
 	try:
 		cur = g.conn.cursor()
 		cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(OSM_TABLE))
 		if cur.rowcount == 2:
-			res = True
+			osm = True
 	except psycopg2.Error, e:
 		pass
-	return jsonify(result=res)
+	try:
+		cur.execute('select name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(table))
+		if cur.rowcount == 2:
+			old = True
+	except psycopg2.Error, e:
+		pass
+	return jsonify(osm=osm, table=old)
 
 @app.route('/split')
 def split():
@@ -327,8 +352,14 @@ def make_osm():
 	xmax = request.args.get('xmax')
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
+	table = request.args.get('table')
+	if table in OTHER_TABLES:
+		table = OTHER_TABLES[table]
+	else:
+		table = TABLE
+
 	cur = g.conn.cursor()
-	cur.execute('SELECT name, disabled, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE ST_Intersects(ST_SetSRID(ST_Buffer(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 0.3), 4326), geom);'.format(table=TABLE), (xmin, ymin, xmax, ymax))
+	cur.execute('SELECT name, disabled, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE ST_Intersects(ST_SetSRID(ST_Buffer(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 0.3), 4326), geom);'.format(table=table), (xmin, ymin, xmax, ymax))
 
 	node_pool = { 'id': 1 } # 'lat_lon': id
 	regions = [] # { name: name, rings: [['outer', [ids]], ['inner', [ids]], ...] }
@@ -534,7 +565,8 @@ def import_osm():
 		if rel.get('action') == 'delete':
 			continue
 		if len(outer) == 0:
-			return import_error('relation {} has no outer ways'.format(rel.get('id')))
+			continue
+			#return import_error('relation {} has no outer ways'.format(rel.get('id')))
 		# reconstruct rings in multipolygon
 		for multi in (inner, outer):
 			i = 0
@@ -559,6 +591,11 @@ def import_osm():
 					if not productive:
 						return import_error('unconnected way in relation {}'.format(rel.get('id')))
 				i = i + 1
+		# check for 2-node rings
+		for multi in (outer, inner):
+			for way in multi:
+				if len(way['nodes']) < 3:
+					return import_error('Way in relation {} has only {} nodes'.format(rel.get('id'), len(way['nodes'])))
 		# sort inner and outer rings
 		polygons = []
 		for way in outer:
@@ -577,7 +614,9 @@ def import_osm():
 		if not w['name']:
 			return import_error('unused in multipolygon way with no name: {}'.format(wid))
 		if w['nodes'][0] != w['nodes'][-1]:
-			return import_error('non-closed unused in multipolygon way: {}'.format(way.get('id')))
+			return import_error('non-closed unused in multipolygon way: {}'.format(wid))
+		if len(w['nodes']) < 3:
+			return import_error('way {} has {} nodes'.format(wid, len(w['nodes'])))
 		if w['name'] in regions:
 			return import_error('way {} has the same name as other way/multipolygon'.format(wid))
 		regions[w['name']] = { 'modified': w['modified'], 'disabled': w['disabled'], 'wkt': 'POLYGON({})'.format(way_to_wkt(nodes, w['nodes'])) }
@@ -591,16 +630,43 @@ def import_osm():
 			continue
 		cur.execute('select count(1) from {} where name = %s'.format(TABLE), (name,))
 		res = cur.fetchone()
-		if res and res[0] > 0:
-			# update
-			cur.execute('update {table} set disabled = %s, geom = ST_GeomFromText(%s, 4326), modified = now(), count_k = -1 where name = %s'.format(table=TABLE), (region['disabled'], region['wkt'], name))
-			updated = updated + 1
-		else:
-			# create
-			cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, ST_GeomFromText(%s, 4326), now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
-			added = added + 1
+		try:
+			if res and res[0] > 0:
+				# update
+				cur.execute('update {table} set disabled = %s, geom = ST_GeomFromText(%s, 4326), modified = now(), count_k = -1 where name = %s'.format(table=TABLE), (region['disabled'], region['wkt'], name))
+				updated = updated + 1
+			else:
+				# create
+				cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, ST_GeomFromText(%s, 4326), now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
+				added = added + 1
+		except psycopg2.Error, e:
+			print 'WKT: {}'.format(region['wkt'])
+			raise
 	g.conn.commit()
 	return jsonify(regions=len(regions), added=added, updated=updated)
+
+@app.route('/stat')
+def statistics():
+	group = request.args.get('group')
+	cur = g.conn.cursor()
+	if group == 'total':
+		cur.execute('select count(1) from borders;')
+		return jsonify(total=cur.fetchone()[0])
+	elif group == 'sizes':
+		cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area from borders;")
+		result = []
+		for res in cur:
+			coord = json.loads(res[3])['coordinates']
+			result.append({ 'name': res[0], 'lat': coord[1], 'lon': coord[0], 'size': res[1], 'nodes': res[2], 'area': res[4] })
+		return jsonify(regions=result)
+	elif group == 'topo':
+		cur.execute("select name, count(1), min(case when ST_Area(geography(g)) = 'NaN' then 0 else ST_Area(geography(g)) end) / 1000000, sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g))) from (select name, (ST_Dump(geom)).geom as g from borders) a group by name;")
+		result = []
+		for res in cur:
+			coord = json.loads(res[4])['coordinates']
+			result.append({ 'name': res[0], 'outer': res[1], 'min_area': res[2], 'inner': res[3], 'lon': coord[0], 'lat': coord[1] })
+		return jsonify(regions=result)
+	return jsonify(status='wrong group id')
 
 if __name__ == '__main__':
 	app.run(threaded=True)

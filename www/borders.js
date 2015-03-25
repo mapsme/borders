@@ -3,12 +3,12 @@ var STYLE_SELECTED = { stroke: true, color: '#ff3', weight: 3, fill: true, fillO
 var FILL_TOO_SMALL = '#0f0';
 var FILL_TOO_BIG = '#800';
 var FILL_ZERO = 'black';
-var MB_TOO_BIG = 100;
-var KM2_AREA_TOO_SMALL = 1;
+var OLD_BORDERS_NAME = 'old';
 
 var map, borders = {}, bordersLayer, selectedId, editing = false;
 var size_good = 5, size_bad = 100;
 var tooSmallLayer = null;
+var oldBordersLayer = null;
 
 function init() {
 	map = L.map('map', { editable: true }).setView([30, 0], 3);
@@ -31,8 +31,16 @@ function init() {
 }
 
 function checkHasOSM() {
-	$.ajax(server + '/hasosm', {
-		success: function(res) { if( res.result ) $('#osm_actions').css('display', 'block'); }
+	$.ajax(server + '/tables', {
+		data: { 'table': OLD_BORDERS_NAME },
+		success: function(res) {
+			if( res.osm )
+				$('#osm_actions').css('display', 'block');
+			if( res.table ) {
+				$('#old_action').css('display', 'block');
+				$('#josm_old').css('display', 'inline');
+			}
+		}
 	});
 }
 
@@ -51,6 +59,22 @@ function updateBorders() {
 		dataType: 'json',
 		simplified: simplified
 	});
+
+	if( oldBordersLayer != null ) {
+		oldBordersLayer.clearLayers();
+		$.ajax(server + '/bbox', {
+			data: {
+				'table': OLD_BORDERS_NAME,
+				'simplify': simplified,
+				'xmin': b.getWest(),
+				'xmax': b.getEast(),
+				'ymin': b.getSouth(),
+				'ymax': b.getNorth()
+			},
+			success: processOldBorders,
+			dataType: 'json'
+		});
+	}
 }
 
 function processResult(data) {
@@ -74,9 +98,9 @@ function processResult(data) {
 		selectLayer(null);
 	}
 
+	var b = map.getBounds();
 	if( tooSmallLayer != null ) {
 		tooSmallLayer.clearLayers();
-		var b = map.getBounds();
 		$.ajax(server + '/small', {
 			data: {
 				'xmin': b.getWest(),
@@ -88,6 +112,13 @@ function processResult(data) {
 			dataType: 'json'
 		});
 	}
+}
+
+function processOldBorders(data) {
+	var layer = L.geoJson(data, {
+		style: { fill: false, color: 'purple', weight: 3, clickable: false }
+	});
+	oldBordersLayer.addLayer(layer);
 }
 
 function processTooSmall(data) {
@@ -232,9 +263,39 @@ function bUpdateColors() {
 	updateBorders();
 }
 
+function bOldBorders() {
+	if( $('#old').prop('checked') ) {
+		oldBordersLayer = L.layerGroup();
+		map.addLayer(oldBordersLayer);
+		updateBorders();
+	} else if( oldBordersLayer != null ) {
+		map.removeLayer(oldBordersLayer);
+		oldBordersLayer = null;
+	}
+}
+
 function bJOSM() {
 	var b = map.getBounds();
 	var url = server + '/josm?' + $.param({
+		'xmin': b.getWest(),
+		'xmax': b.getEast(),
+		'ymin': b.getSouth(),
+		'ymax': b.getNorth()
+	});
+	$.ajax({
+		url: 'http://127.0.0.1:8111/import',
+		data: { url: url, new_layer: 'true' },
+		complete: function(t) {
+			if( t.status != 200 )
+				window.alert('Please enable remote_control in JOSM');
+		}
+	});
+}
+
+function bJosmOld() {
+	var b = map.getBounds();
+	var url = server + '/josm?' + $.param({
+		'table': OLD_BORDERS_NAME,
 		'xmin': b.getWest(),
 		'xmax': b.getEast(),
 		'ymin': b.getSouth(),

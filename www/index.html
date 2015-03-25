@@ -24,6 +24,7 @@
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
+			#old_action, #josm_old { display: none; }
 		</style>
 	</head>
 	<body onload="init();">
@@ -53,13 +54,17 @@
 				</div>
 				<div id="b_josm">
 					<button onclick="bJOSM()">Открыть в JOSM</button>
+					<button id="josm_old" onclick="bJosmOld()">ст.</button>
 					<button onclick="bJosmZoom()">&#x1f50d;</button>
 				</div>
 				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
 					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();" style="max-width: 100px;">
 				</form>
 				<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>
-				<button onclick="bBackup()">Архив границ</button>
+				<button onclick="bBackup()">Архив границ</button><br>
+				<div id="old_action">
+					<input type="checkbox" id="old" onchange="bOldBorders()"><label for="old"> старые границы</label>
+				</div>
 			</div>
 			<div id="actions" class="actions">
 				<button onclick="bDisable()" id="b_disable">Убрать</button>
