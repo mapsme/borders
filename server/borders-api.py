@@ -15,7 +15,7 @@ SMALL_KM2 = 10
 JOSM_FORCE_MULTI = True
 
 app = Flask(__name__)
-#app.debug=True
+app.debug=True
 Compress(app)
 CORS(app)
 
@@ -171,7 +171,7 @@ def find_osm_borders():
 	lat = request.args.get('lat')
 	lon = request.args.get('lon')
 	cur = g.conn.cursor()
-	cur.execute('select osm_id, name, admin_level, ST_Area(geography(way))/1000000 as area_km from {table} where ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326)) order by admin_level desc, name asc;'.format(table=OSM_TABLE), (lon, lat))
+	cur.execute("select osm_id, name, admin_level, (case when ST_Area(geography(way)) = 'NaN' then 0 else ST_Area(geography(way))/1000000 end) as area_km from {table} where ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326)) order by admin_level desc, name asc;".format(table=OSM_TABLE), (lon, lat))
 	result = []
 	for rec in cur:
 		b = { 'id': rec[0], 'name': rec[1], 'admin_level': rec[2], 'area': rec[3] }
