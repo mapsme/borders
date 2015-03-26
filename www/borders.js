@@ -3,7 +3,7 @@ var STYLE_SELECTED = { stroke: true, color: '#ff3', weight: 3, fill: true, fillO
 var FILL_TOO_SMALL = '#0f0';
 var FILL_TOO_BIG = '#800';
 var FILL_ZERO = 'black';
-var OLD_BORDERS_NAME = 'old';
+var OLD_BORDERS_NAME; // filled in checkHasOSM()
 
 var map, borders = {}, bordersLayer, selectedId, editing = false;
 var size_good = 5, size_bad = 100;
@@ -32,11 +32,11 @@ function init() {
 
 function checkHasOSM() {
 	$.ajax(server + '/tables', {
-		data: { 'table': OLD_BORDERS_NAME },
 		success: function(res) {
 			if( res.osm )
 				$('#osm_actions').css('display', 'block');
-			if( res.table ) {
+			if( res.tables && res.tables.length > 0 ) {
+				OLD_BORDERS_NAME = res.tables[0];
 				$('#old_action').css('display', 'block');
 				$('#josm_old').css('display', 'inline');
 			}
@@ -60,7 +60,7 @@ function updateBorders() {
 		simplified: simplified
 	});
 
-	if( oldBordersLayer != null ) {
+	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
 		oldBordersLayer.clearLayers();
 		$.ajax(server + '/bbox', {
 			data: {

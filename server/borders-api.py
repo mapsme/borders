@@ -2,9 +2,13 @@
 from flask import Flask, g, request, json, jsonify, abort, Response
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
-from lxml import etree
-from xml.sax.saxutils import quoteattr
 import psycopg2
+
+try:
+	from lxml import etree
+	LXML = True
+except:
+	LXML = False
 
 TABLE = 'borders'
 OSM_TABLE = 'osm_borders'
@@ -94,13 +98,8 @@ def query_small_in_bbox():
 
 @app.route('/tables')
 def check_osm_table():
-	table = request.args.get('table')
-	if table in OTHER_TABLES:
-		table = OTHER_TABLES[table]
-	else:
-		table = TABLE
 	osm = False
-	old = False
+	old = []
 	try:
 		cur = g.conn.cursor()
 		cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(OSM_TABLE))
@@ -108,13 +107,14 @@ def check_osm_table():
 			osm = True
 	except psycopg2.Error, e:
 		pass
-	try:
-		cur.execute('select name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(table))
-		if cur.rowcount == 2:
-			old = True
-	except psycopg2.Error, e:
-		pass
-	return jsonify(osm=osm, table=old)
+	for t, tname in OTHER_TABLES.iteritems():
+		try:
+			cur.execute('select name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(tname))
+			if cur.rowcount == 2:
+				old.append(t)
+		except psycopg2.Error, e:
+			pass
+	return jsonify(osm=osm, tables=old, readonly=READONLY)
 
 @app.route('/split')
 def split():
@@ -315,6 +315,8 @@ def draw_hull():
 
 @app.route('/backup')
 def backup_do():
+	if READONLY:
+		abort(405)
 	cur = g.conn.cursor()
 	cur.execute("SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup) from {};".format(BACKUP))
 	(timestamp, tsmax) = cur.fetchone()
@@ -326,6 +328,8 @@ def backup_do():
 
 @app.route('/restore')
 def backup_restore():
+	if READONLY:
+		abort(405)
 	ts = request.args.get('timestamp')
 	cur = g.conn.cursor()
 	cur.execute('SELECT count(1) from {} where backup = %s;'.format(BACKUP), (ts,))
@@ -420,6 +424,12 @@ def make_osm():
 	xml = xml + '</osm>'
 	return Response(xml, mimetype='application/x-osm+xml')
 
+def quoteattr(value):
+	value = value.replace('&', '&amp;').replace('>', '&gt;').replace('<', '&lt;')
+	value = value.replace('\n', '&#10;').replace('\r', '&#13;').replace('\t', '&#9;')
+	value = value.replace('"', '&quot;')
+	return '"{}"'.format(value)
+
 def ring_hash(refs):
 	#return json.dumps(refs)
 	return hash(tuple(sorted(refs)))
@@ -481,6 +491,8 @@ def bbox_contains(outer, inner):
 def import_osm():
 	if READONLY:
 		abort(405)
+	if not LXML:
+		return import_error('importing is disabled due to absent lxml library')
 	f = request.files['file']
 	if not f:
 		return import_error('failed upload')
