@@ -3,6 +3,7 @@ from flask import Flask, g, request, json, jsonify, abort, Response
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
 import psycopg2
+import config
 
 try:
 	from lxml import etree
@@ -10,16 +11,8 @@ try:
 except:
 	LXML = False
 
-TABLE = 'borders'
-OSM_TABLE = 'osm_borders'
-OTHER_TABLES = { 'old': 'old_borders' }
-BACKUP = 'borders_backup'
-READONLY = False
-SMALL_KM2 = 10
-JOSM_FORCE_MULTI = True
-
 app = Flask(__name__)
-app.debug=True
+app.debug=config.DEBUG
 Compress(app)
 CORS(app)
 
@@ -51,10 +44,10 @@ def query_bbox():
 	else:
 		simplify = 0
 	table = request.args.get('table')
-	if table in OTHER_TABLES:
-		table = OTHER_TABLES[table]
+	if table in config.OTHER_TABLES:
+		table = config.OTHER_TABLES[table]
 	else:
-		table = TABLE
+		table = config.TABLE
 
 	cur = g.conn.cursor()
 	cur.execute("""SELECT name, ST_AsGeoJSON({geom}, 7) as geometry, ST_NPoints(geom),
@@ -79,10 +72,10 @@ def query_small_in_bbox():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	table = request.args.get('table')
-	if table in OTHER_TABLES:
-		table = OTHER_TABLES[table]
+	if table in config.OTHER_TABLES:
+		table = config.OTHER_TABLES[table]
 	else:
-		table = TABLE
+		table = config.TABLE
 	cur = g.conn.cursor()
 	cur.execute('''SELECT name, round(ST_Area(geography(ring))) as area, ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
 		FROM (
@@ -90,7 +83,7 @@ def query_small_in_bbox():
 			FROM {table}
 			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
 		) g
-		WHERE ST_Area(geography(ring)) < %s;'''.format(table=table), (xmin, ymin, xmax, ymax, SMALL_KM2 * 1000000))
+		WHERE ST_Area(geography(ring)) < %s;'''.format(table=table), (xmin, ymin, xmax, ymax, config.SMALL_KM2 * 1000000))
 	result = []
 	for rec in cur:
 		result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
@@ -102,53 +95,53 @@ def check_osm_table():
 	old = []
 	try:
 		cur = g.conn.cursor()
-		cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(OSM_TABLE))
+		cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(config.OSM_TABLE))
 		if cur.rowcount == 2:
 			osm = True
 	except psycopg2.Error, e:
 		pass
-	for t, tname in OTHER_TABLES.iteritems():
+	for t, tname in config.OTHER_TABLES.iteritems():
 		try:
 			cur.execute('select name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(tname))
 			if cur.rowcount == 2:
 				old.append(t)
 		except psycopg2.Error, e:
 			pass
-	return jsonify(osm=osm, tables=old, readonly=READONLY)
+	return jsonify(osm=osm, tables=old, readonly=config.READONLY)
 
 @app.route('/split')
 def split():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	line = request.args.get('line')
 	cur = g.conn.cursor()
 	# check that we're splitting a single polygon
-	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
 	res = cur.fetchone()
 	if not res or res[0] != 1:
 		return jsonify(status='border should have one outer ring')
-	cur.execute('select ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom) from {} where name = %s;'.format(TABLE), (line, name))
+	cur.execute('select ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom) from {} where name = %s;'.format(config.TABLE), (line, name))
 	if cur.rowcount > 1:
 		# no use of doing anything if the polygon wasn't modified
 		geometries = []
 		for res in cur:
 			geometries.append(res[0])
 		# get disabled flag and delete old border
-		cur.execute('select disabled from {} where name = %s;'.format(TABLE), (name,))
+		cur.execute('select disabled from {} where name = %s;'.format(config.TABLE), (name,))
 		disabled = cur.fetchone()[0]
-		cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+		cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
 		# find untaken name series
 		base_name = name
 		found = False
 		while not found:
 			base_name = base_name + '_'
-			cur.execute('select count(1) from {} where name like %s;'.format(TABLE), (name.replace('_', '\_').replace('%', '\%') + '%',))
+			cur.execute('select count(1) from {} where name like %s;'.format(config.TABLE), (name.replace('_', '\_').replace('%', '\%') + '%',))
 			found = cur.fetchone()[0] == 0
 		# insert new geometries
 		counter = 1
 		for geom in geometries:
-			cur.execute('insert into {table} (name, geom, disabled, count_k, modified) values (%s, ST_GeomFromText(%s, 4326), %s, -1, now());'.format(table=TABLE), ('{}{}'.format(base_name, counter), geom, disabled))
+			cur.execute('insert into {table} (name, geom, disabled, count_k, modified) values (%s, ST_GeomFromText(%s, 4326), %s, -1, now());'.format(table=config.TABLE), ('{}{}'.format(base_name, counter), geom, disabled))
 			counter = counter + 1
 		g.conn.commit()
 
@@ -156,13 +149,13 @@ def split():
 
 @app.route('/join')
 def join_borders():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	name2 = request.args.get('name2')
 	cur = g.conn.cursor()
-	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from {table} where name = %s) as b2 where name = %s;'.format(table=TABLE), (name2, name))
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name2,))
+	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from {table} where name = %s) as b2 where name = %s;'.format(table=config.TABLE), (name2, name))
+	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name2,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
@@ -171,7 +164,7 @@ def find_osm_borders():
 	lat = request.args.get('lat')
 	lon = request.args.get('lon')
 	cur = g.conn.cursor()
-	cur.execute("select osm_id, name, admin_level, (case when ST_Area(geography(way)) = 'NaN' then 0 else ST_Area(geography(way))/1000000 end) as area_km from {table} where ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326)) order by admin_level desc, name asc;".format(table=OSM_TABLE), (lon, lat))
+	cur.execute("select osm_id, name, admin_level, (case when ST_Area(geography(way)) = 'NaN' then 0 else ST_Area(geography(way))/1000000 end) as area_km from {table} where ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326)) order by admin_level desc, name asc;".format(table=config.OSM_TABLE), (lon, lat))
 	result = []
 	for rec in cur:
 		b = { 'id': rec[0], 'name': rec[1], 'admin_level': rec[2], 'area': rec[3] }
@@ -180,64 +173,64 @@ def find_osm_borders():
 
 @app.route('/from_osm')
 def copy_from_osm():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	osm_id = request.args.get('id')
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, {name}, now(), -1 from {osm} o where o.osm_id = %s limit 1;'.format(table=TABLE, osm=OSM_TABLE, name='%s' if name != '' else '%s || o.name'), (name, osm_id))
+	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, {name}, now(), -1 from {osm} o where o.osm_id = %s limit 1;'.format(table=config.TABLE, osm=config.OSM_TABLE, name='%s' if name != '' else '%s || o.name'), (name, osm_id))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/rename')
 def set_name():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	new_name = request.args.get('newname')
 	cur = g.conn.cursor()
-	cur.execute('update {} set name = %s where name = %s;'.format(TABLE), (new_name, name))
+	cur.execute('update {} set name = %s where name = %s;'.format(config.TABLE), (new_name, name))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/delete')
 def delete_border():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/disable')
 def disable_border():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('update {} set disabled = true where name = %s;'.format(TABLE), (name,))
+	cur.execute('update {} set disabled = true where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/enable')
 def enable_border():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('update {} set disabled = false where name = %s;'.format(TABLE), (name,))
+	cur.execute('update {} set disabled = false where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/comment', methods=['POST'])
 def update_comment():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.form['name']
 	comment = request.form['comment']
 	cur = g.conn.cursor()
-	cur.execute('update {} set cmnt = %s where name = %s;'.format(TABLE), (comment, name))
+	cur.execute('update {} set cmnt = %s where name = %s;'.format(config.TABLE), (comment, name))
 	g.conn.commit()
 	return jsonify(status='ok')
 
@@ -246,7 +239,7 @@ def divide_preview():
 	like = request.args.get('like')
 	query = request.args.get('query')
 	cur = g.conn.cursor()
-	cur.execute('select name, ST_AsGeoJSON(ST_Simplify(way, 0.01)) as way from {table}, (select way as pway from {table} where name like %s) r where ST_Contains(r.pway, way) and {query};'.format(table=OSM_TABLE, query=query), (like,))
+	cur.execute('select name, ST_AsGeoJSON(ST_Simplify(way, 0.01)) as way from {table}, (select way as pway from {table} where name like %s) r where ST_Contains(r.pway, way) and {query};'.format(table=config.OSM_TABLE, query=query), (like,))
 	result = []
 	for rec in cur:
 		feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]), 'properties': { 'name': rec[0] } }
@@ -255,7 +248,7 @@ def divide_preview():
 
 @app.route('/divide')
 def divide():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	like = request.args.get('like')
@@ -270,18 +263,18 @@ def divide():
 			select way from {osm} where name like %s
 		) r
 		where ST_Contains(r.way, o.way) and {query};
-		'''.format(table=TABLE, osm=OSM_TABLE, query=query), (prefix, like,))
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+		'''.format(table=config.TABLE, osm=config.OSM_TABLE, query=query), (prefix, like,))
+	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/chop1')
 def chop_largest_or_farthest():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
 	res = cur.fetchone()
 	if not res or res[0] < 2:
 		return jsonify(status='border should have more than one outer ring')
@@ -294,57 +287,57 @@ def chop_largest_or_farthest():
 			SELECT name||'_small' as name, disabled, now() as modified, ST_Collect(g) AS geom, ST_Area(ST_Collect(g)) as a
 			FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
 			GROUP BY name, disabled)
-			) x;""".format(table=TABLE), (name,))
-	cur.execute('delete from {} where name = %s;'.format(TABLE), (name,))
+			) x;""".format(table=config.TABLE), (name,))
+	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/hull')
 def draw_hull():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	name = request.args.get('name')
 	cur = g.conn.cursor()
-	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(TABLE), (name,))
+	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
 	res = cur.fetchone()
 	if not res or res[0] < 2:
 		return jsonify(status='border should have more than one outer ring')
-	cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(TABLE), (name,))
+	cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/backup')
 def backup_do():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	cur = g.conn.cursor()
-	cur.execute("SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup) from {};".format(BACKUP))
+	cur.execute("SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup) from {};".format(config.BACKUP))
 	(timestamp, tsmax) = cur.fetchone()
 	if timestamp == tsmax:
 		return jsonify(status='please try again later')
-	cur.execute('INSERT INTO {backup} (backup, name, geom, disabled, count_k, modified, cmnt) SELECT %s, name, geom, disabled, count_k, modified, cmnt from {table};'.format(backup=BACKUP, table=TABLE), (timestamp,))
+	cur.execute('INSERT INTO {backup} (backup, name, geom, disabled, count_k, modified, cmnt) SELECT %s, name, geom, disabled, count_k, modified, cmnt from {table};'.format(backup=config.BACKUP, table=config.TABLE), (timestamp,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/restore')
 def backup_restore():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	ts = request.args.get('timestamp')
 	cur = g.conn.cursor()
-	cur.execute('SELECT count(1) from {} where backup = %s;'.format(BACKUP), (ts,))
+	cur.execute('SELECT count(1) from {} where backup = %s;'.format(config.BACKUP), (ts,))
 	(count,) = cur.fetchone()
 	if count <= 0:
 		return jsonify(status='no such timestamp')
-	cur.execute('DELETE FROM {};'.format(TABLE))
-	cur.execute('INSERT INTO {table} (name, geom, disabled, count_k, modified, cmnt) SELECT name, geom, disabled, count_k, modified, cmnt from {backup} where backup = %s;'.format(backup=BACKUP, table=TABLE), (ts,))
+	cur.execute('DELETE FROM {};'.format(config.TABLE))
+	cur.execute('INSERT INTO {table} (name, geom, disabled, count_k, modified, cmnt) SELECT name, geom, disabled, count_k, modified, cmnt from {backup} where backup = %s;'.format(backup=config.BACKUP, table=config.TABLE), (ts,))
 	g.conn.commit()
 	return jsonify(status='ok')
 
 @app.route('/backlist')
 def backup_list():
 	cur = g.conn.cursor()
-	cur.execute("SELECT backup, count(1) from {} group by backup order by backup desc;".format(BACKUP))
+	cur.execute("SELECT backup, count(1) from {} group by backup order by backup desc;".format(config.BACKUP))
 	result = []
 	for res in cur:
 		result.append({ 'timestamp': res[0], 'text': res[0], 'count': res[1] })
@@ -357,10 +350,10 @@ def make_osm():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	table = request.args.get('table')
-	if table in OTHER_TABLES:
-		table = OTHER_TABLES[table]
+	if table in config.OTHER_TABLES:
+		table = config.OTHER_TABLES[table]
 	else:
-		table = TABLE
+		table = config.TABLE
 
 	cur = g.conn.cursor()
 	cur.execute('SELECT name, disabled, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE ST_Intersects(ST_SetSRID(ST_Buffer(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 0.3), 4326), geom);'.format(table=table), (xmin, ymin, xmax, ymax))
@@ -388,7 +381,7 @@ def make_osm():
 	ways = {} # json: id
 	for region in regions:
 		w1key = ring_hash(region['rings'][0][1])
-		if not JOSM_FORCE_MULTI and len(region['rings']) == 1 and w1key not in ways:
+		if not config.JOSM_FORCE_MULTI and len(region['rings']) == 1 and w1key not in ways:
 			# simple case: a way
 			ways[w1key] = wrid
 			xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
@@ -489,7 +482,7 @@ def bbox_contains(outer, inner):
 
 @app.route('/import', methods=['POST'])
 def import_osm():
-	if READONLY:
+	if config.READONLY:
 		abort(405)
 	if not LXML:
 		return import_error('importing is disabled due to absent lxml library')
@@ -640,16 +633,16 @@ def import_osm():
 	for name, region in regions.iteritems():
 		if not region['modified']:
 			continue
-		cur.execute('select count(1) from {} where name = %s'.format(TABLE), (name,))
+		cur.execute('select count(1) from {} where name = %s'.format(config.TABLE), (name,))
 		res = cur.fetchone()
 		try:
 			if res and res[0] > 0:
 				# update
-				cur.execute('update {table} set disabled = %s, geom = ST_GeomFromText(%s, 4326), modified = now(), count_k = -1 where name = %s'.format(table=TABLE), (region['disabled'], region['wkt'], name))
+				cur.execute('update {table} set disabled = %s, geom = ST_GeomFromText(%s, 4326), modified = now(), count_k = -1 where name = %s'.format(table=config.TABLE), (region['disabled'], region['wkt'], name))
 				updated = updated + 1
 			else:
 				# create
-				cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, ST_GeomFromText(%s, 4326), now(), -1);'.format(table=TABLE), (name, region['disabled'], region['wkt']))
+				cur.execute('insert into {table} (name, disabled, geom, modified, count_k) values (%s, %s, ST_GeomFromText(%s, 4326), now(), -1);'.format(table=config.TABLE), (name, region['disabled'], region['wkt']))
 				added = added + 1
 		except psycopg2.Error, e:
 			print 'WKT: {}'.format(region['wkt'])
@@ -660,19 +653,24 @@ def import_osm():
 @app.route('/stat')
 def statistics():
 	group = request.args.get('group')
+	table = request.args.get('table')
+	if table in config.OTHER_TABLES:
+		table = config.OTHER_TABLES[table]
+	else:
+		table = config.TABLE
 	cur = g.conn.cursor()
 	if group == 'total':
 		cur.execute('select count(1) from borders;')
 		return jsonify(total=cur.fetchone()[0])
 	elif group == 'sizes':
-		cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area from borders;")
+		cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area from {};".format(table))
 		result = []
 		for res in cur:
 			coord = json.loads(res[3])['coordinates']
 			result.append({ 'name': res[0], 'lat': coord[1], 'lon': coord[0], 'size': res[1], 'nodes': res[2], 'area': res[4] })
 		return jsonify(regions=result)
 	elif group == 'topo':
-		cur.execute("select name, count(1), min(case when ST_Area(geography(g)) = 'NaN' then 0 else ST_Area(geography(g)) end) / 1000000, sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g))) from (select name, (ST_Dump(geom)).geom as g from borders) a group by name;")
+		cur.execute("select name, count(1), min(case when ST_Area(geography(g)) = 'NaN' then 0 else ST_Area(geography(g)) end) / 1000000, sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g))) from (select name, (ST_Dump(geom)).geom as g from {}) a group by name;".format(table))
 		result = []
 		for res in cur:
 			coord = json.loads(res[4])['coordinates']
