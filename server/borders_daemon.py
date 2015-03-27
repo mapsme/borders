@@ -10,10 +10,6 @@ try:
 except:
 	HAS_DAEMON = False
 
-FILENAME = 'borders-daemon-status.txt'
-#FILEPATH = '/var/run/' + FILENAME
-FILEPATH = '/Users/ilyazverev/Sites/' + FILENAME
-
 class App():
 	def __init__(self):
 		self.stdin_path = '/dev/null'
@@ -24,22 +20,27 @@ class App():
 
 	def process(self, region):
 		logger.info('Processing {}'.format(region))
-		f = open(FILEPATH, 'w')
-		f.write(region)
-		f.close()
-		with self.conn.cursor() as cur:
-			cur.execute('update borders set count_k = n.count from (select coalesce(sum(t.count), 0) as count from borders b, tiles t where ST_Intersects(b.geom, t.tile) and name = %s) as n where name = %s;', (region, region));
 		try:
-			os.remove(FILEPATH)
+			f = open(config.DAEMON_STATUS_PATH, 'w')
+			f.write(region)
+			f.close()
+		except:
+			pass
+
+		with self.conn.cursor() as cur:
+			cur.execute('update {table} set count_k = n.count from (select coalesce(sum(t.count), 0) as count from {table} b, tiles t where ST_Intersects(b.geom, t.tile) and name = %s) as n where name = %s;'.format(table=config.TABLE), (region, region));
+		try:
+			f = open(config.DAEMON_STATUS_PATH, 'w')
+			f.close()
 		except:
 			pass
 
 	def find_region(self):
 		with self.conn.cursor() as cur:
-			cur.execute('select name from borders where count_k < 0 order by st_area(geom) limit 1;')
+			cur.execute('select name from {table} where count_k < 0 order by st_area(geom) limit 1;'.format(table=config.TABLE))
 			res = cur.fetchone()
 			if not res:
-				cur.execute('select name from borders where count_k is null order by st_area(geom) limit 1;')
+				cur.execute('select name from {table} where count_k is null order by st_area(geom) limit 1;'.format(table=config.TABLE))
 				res = cur.fetchone()
 		return res[0] if res else None
 

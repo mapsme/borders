@@ -18,3 +18,5 @@ SMALL_KM2 = 10
 JOSM_FORCE_MULTI = True
 # alert instead of json on import error
 IMPORT_ERROR_ALERT = False
+# file to which daemon writes the name of currently processed region
+DAEMON_STATUS_PATH = '/var/www/html/borders-daemon-status.txt'
