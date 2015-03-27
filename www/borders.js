@@ -6,7 +6,7 @@ var FILL_ZERO = 'black';
 var OLD_BORDERS_NAME; // filled in checkHasOSM()
 var IMPORT_ENABLED = false;
 
-var map, borders = {}, bordersLayer, selectedId, editing = false;
+var map, borders = {}, bordersLayer, selectedId, editing = false, readonly = false;
 var size_good = 5, size_bad = 50;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
@@ -54,6 +54,8 @@ function checkHasOSM() {
 			if( res.readonly ) {
 				$('#action_buttons').css('display', 'none');
 				$('#import_link').css('display', 'none');
+				$('#backups').css('display', 'none');
+				readonly = true;
 			}
 			if( !res.readonly && IMPORT_ENABLED ) {
 				$('#import_link').css('display', 'none');
@@ -352,7 +354,7 @@ function bImport() {
 }
 
 function bShowRename() {
-	if( !selectedId || !(selectedId in borders) )
+	if( !selectedId || !(selectedId in borders) || readonly )
 		return;
 	$('#b_rename').val(borders[selectedId].name);
 	$('#rename').css('display', 'block');

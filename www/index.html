@@ -61,7 +61,9 @@
 				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
 					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();" style="max-width: 100px;">
 				</form>
-				<button onclick="bBackup()">Архив границ</button><br>
+				<div id="backups">
+					<button onclick="bBackup()">Архив границ</button><br>
+				</div>
 				<div id="old_action">
 					<input type="checkbox" id="old" onchange="bOldBorders()"><label for="old"> старые границы</label>
 				</div>
@@ -87,7 +89,7 @@
 				</div>
 
 				<div id="info">
-					<b><a href="#" onclick="bShowRename(); return false;">Название:</a></b>
+					<b><a href="#" id="name_link" onclick="bShowRename(); return false;">Название:</a></b>
 					<span id="b_name"></span><br>
 					<div id="rename">
 						<input type="text" id="b_rename">
