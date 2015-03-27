@@ -75,6 +75,7 @@ function statSizes(data) {
 	var list_1mb = [], list_50mb = [], list_100mb = [];
 	var list_spaces = [], list_bad = [];
 	var list_100km = [], list_100kp = [], list_zero = [];
+	var list_disabled = [], list_commented = [];
 
 	for( var i = 0; i < data.regions.length; i++ ) {
 		region = data.regions[i];
@@ -96,10 +97,16 @@ function statSizes(data) {
 			list_bad.push(region);
 		if( region.name.indexOf(' ') >= 0 )
 			list_spaces.push(region);
+		if( region.disabled )
+			list_disabled.push(region);
+		if( region.commented )
+			list_commented.push(region);
 	}
 
 	statFill('names_spaces', list_spaces.length);
 	statFillList('names_bad_list', list_bad, null, 'names_bad');
+	statFillList('total_disabled_list', list_disabled, null, 'total_disabled');
+	statFillList('total_commented_list', list_commented, null, 'total_commented');
 
 	list_1mb.sort(function(a, b) { return a.size_mb - b.size_mb; });
 	list_50mb.sort(function(a, b) { return a.size_mb - b.size_mb; });
@@ -125,7 +132,7 @@ function statTopo(data) {
 			list_multi.push(region);
 		if( region.inner > 0 )
 			list_holed.push(region);
-		if( region.min_area > 0 && region.min_area < 100 )
+		if( region.outer > 1 && region.min_area > 0 && region.min_area < 100 )
 			list_100km.push(region);
 	}
 

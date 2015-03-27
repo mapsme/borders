@@ -466,8 +466,10 @@ def way_to_wkt(node_pool, refs):
 	return '({})'.format(','.join(coords))
 
 def import_error(msg):
-	return '<script>alert("{}");</script>'.format(msg)
-	#return jsonify(status=msg)
+	if config.IMPORT_ERROR_ALERT:
+		return '<script>alert("{}");</script>'.format(msg)
+	else:
+		return jsonify(status=msg)
 
 def extend_bbox(bbox, x, y=None):
 	if y is not None:
@@ -617,7 +619,8 @@ def import_osm():
 		if w['used']:
 			continue
 		if not w['name']:
-			return import_error('unused in multipolygon way with no name: {}'.format(wid))
+			continue
+			#return import_error('unused in multipolygon way with no name: {}'.format(wid))
 		if w['nodes'][0] != w['nodes'][-1]:
 			return import_error('non-closed unused in multipolygon way: {}'.format(wid))
 		if len(w['nodes']) < 3:
@@ -650,6 +653,30 @@ def import_osm():
 	g.conn.commit()
 	return jsonify(regions=len(regions), added=added, updated=updated)
 
+@app.route('/poly')
+def export_poly():
+	xmin = request.args.get('xmin')
+	xmax = request.args.get('xmax')
+	ymin = request.args.get('ymin')
+	ymax = request.args.get('ymax')
+	table = request.args.get('table')
+	if table in config.OTHER_TABLES:
+		table = config.OTHER_TABLES[table]
+	else:
+		table = config.TABLE
+
+	cur = g.conn.cursor()
+	if xmin and xmax and ymin and ymax:
+		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE not disabled
+			and ST_Intersects(ST_SetSRID(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 4326), geom);
+			""".format(table=table), (xmin, ymin, xmax, ymax))
+	else:
+		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE not disabled;""".format(table=table))
+	result = []
+	for rec in cur:
+		pass
+	pass
+
 @app.route('/stat')
 def statistics():
 	group = request.args.get('group')
@@ -663,11 +690,11 @@ def statistics():
 		cur.execute('select count(1) from borders;')
 		return jsonify(total=cur.fetchone()[0])
 	elif group == 'sizes':
-		cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area from {};".format(table))
+		cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area, disabled, (case when cmnt is null or cmnt = '' then false else true end) as cmnt from {};".format(table))
 		result = []
 		for res in cur:
 			coord = json.loads(res[3])['coordinates']
-			result.append({ 'name': res[0], 'lat': coord[1], 'lon': coord[0], 'size': res[1], 'nodes': res[2], 'area': res[4] })
+			result.append({ 'name': res[0], 'lat': coord[1], 'lon': coord[0], 'size': res[1], 'nodes': res[2], 'area': res[4], 'disabled': res[5], 'commented': res[6] })
 		return jsonify(regions=result)
 	elif group == 'topo':
 		cur.execute("select name, count(1), min(case when ST_Area(geography(g)) = 'NaN' then 0 else ST_Area(geography(g)) end) / 1000000, sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g))) from (select name, (ST_Dump(geom)).geom as g from {}) a group by name;".format(table))

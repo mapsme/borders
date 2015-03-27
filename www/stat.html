@@ -19,6 +19,12 @@
 		</div>
 		<div id="sizes">
 			<div>
+				Отключено из сборки: <span id="total_disabled"></span> (<a href="#" onclick="return statOpen('total_disabled_list');">список</a>)<br>
+				<div id="total_disabled_list" class="h"></div>
+				Прокомментировано: <span id="total_commented"></span> (<a href="#" onclick="return statOpen('total_commented_list');">список</a>)<br>
+				<div id="total_commented_list" class="h"></div>
+			</div>
+			<div>
 				Названий с пробелами: <span id="names_spaces"></span><br>
 				Названий с левыми символами: <span id="names_bad"></span> (<a href="#" onclick="return statOpen('names_bad_list');">список</a>)<br>
 				<div id="names_bad_list" class="h"></div>

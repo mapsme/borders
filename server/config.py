@@ -1,5 +1,5 @@
 # passed to flask.Debug
-DEBUG = False
+DEBUG = True
 # if the main table is read-only
 READONLY = False
 # main table name
@@ -14,3 +14,5 @@ BACKUP = 'borders_backup'
 SMALL_KM2 = 10
 # force multipolygons in JOSM output
 JOSM_FORCE_MULTI = True
+# alert instead of json on import error
+IMPORT_ERROR_ALERT = False
