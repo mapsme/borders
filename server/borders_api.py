@@ -445,7 +445,7 @@ def josm_borders_along():
 	# select all outer osm borders inside a buffer of the given line
 	cur.execute("""
 		with linestr as (
-			select ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.1)) as line
+			select ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)) as line
 			from {table} where name = %s
 		), osmborders as (
 			select (ST_Dump(way)).geom as g from {osm}, linestr where ST_Intersects(line, way)
