@@ -36,7 +36,7 @@ function statFill(id, value, digits) {
 
 function getIndexLink(region) {
 	var big = region.area > 1000;
-	return 'index.html#' + (big ? 7 : 12) + '/' + region.lat + '/' + region.lon;
+	return 'index.html#' + (big ? 8 : 12) + '/' + region.lat + '/' + region.lon;
 }
 
 function statFillList(id, regions, comment, count) {
@@ -75,6 +75,7 @@ function statSizes(data) {
 	var list_1mb = [], list_50mb = [], list_100mb = [];
 	var list_spaces = [], list_bad = [];
 	var list_100km = [], list_100kp = [], list_zero = [];
+	var list_100p = [];
 	var list_disabled = [], list_commented = [];
 
 	for( var i = 0; i < data.regions.length; i++ ) {
@@ -85,6 +86,8 @@ function statSizes(data) {
 			list_zero.push(region);
 		if( region.nodes > 50000 )
 			list_100kp.push(region);
+		if( region.nodes < 50 )
+			list_100p.push(region);
 		var size_mb = region.size * 8 / 1024 / 1024;
 		region.size_mb = size_mb;
 		if( size_mb < 1 )
@@ -117,8 +120,10 @@ function statSizes(data) {
 
 	list_100km.sort(function(a, b) { return a.area - b.area; });
 	list_100kp.sort(function(a, b) { return b.nodes - a.nodes; });
+	list_100p.sort(function(a, b) { return a.nodes - b.nodes; });
 	statFillList('areas_100km_list', list_100km, function(r) { return formatNum(r.area, 2) + ' км²'; }, 'areas_100km');
 	statFillList('areas_50k_points_list', list_100kp, 'nodes', 'areas_50k_points');
+	statFillList('areas_100_points_list', list_100p, 'nodes', 'areas_100_points');
 	statFillList('areas_0_list', list_zero, null, 'areas_0');
 
 	statQuery('topo', statTopo);
