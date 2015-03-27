@@ -22,7 +22,7 @@ def hello_world():
 
 @app.before_request
 def before_request():
-	g.conn = psycopg2.connect('dbname=borders')
+	g.conn = psycopg2.connect(config.CONNECTION)
 
 @app.teardown_request
 def teardown(exception):
