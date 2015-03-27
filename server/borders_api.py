@@ -437,6 +437,51 @@ def make_osm():
 	xml = xml + '</osm>'
 	return Response(xml, mimetype='application/x-osm+xml')
 
+@app.route('/josmbord')
+def josm_borders_along():
+	name = request.args.get('name')
+	line = request.args.get('line')
+	cur = g.conn.cursor()
+	# select all outer osm borders inside a buffer of the given line
+	cur.execute("""
+		with linestr as (
+			select ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.1)) as line
+			from {table} where name = %s
+		), osmborders as (
+			select (ST_Dump(way)).geom as g from {osm}, linestr where ST_Intersects(line, way)
+		)
+		select ST_AsGeoJSON((ST_Dump(ST_LineMerge(ST_Intersection(ST_Collect(ST_ExteriorRing(g)), line)))).geom) from osmborders, linestr group by line
+		""".format(table=config.TABLE, osm=config.OSM_TABLE), (line, name))
+
+	node_pool = { 'id': 1 } # 'lat_lon': id
+	lines = []
+	for rec in cur:
+		geometry = json.loads(rec[0])
+		if geometry['type'] == 'LineString':
+			nodes = parse_linestring(node_pool, geometry['coordinates'])
+		elif geometry['type'] == 'MultiLineString':
+			nodes = []
+			for line in geometry['coordinates']:
+				nodes.extend(parse_linestring(node_pool, line))
+		if len(nodes) > 0:
+			lines.append(nodes)
+	
+	xml = '<?xml version="1.0" encoding="UTF-8"?><osm version="0.6" upload="false">'
+	for latlon, node_id in node_pool.items():
+		if latlon != 'id':
+			(lat, lon) = latlon.split()
+			xml = xml + '<node id="{id}" visible="true" version="1" lat="{lat}" lon="{lon}" />'.format(id=node_id, lat=lat, lon=lon)
+
+	wrid = 1
+	for line in lines:
+		xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
+		for nd in line:
+			xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
+		xml = xml + '</way>'
+		wrid = wrid + 1
+	xml = xml + '</osm>'
+	return Response(xml, mimetype='application/x-osm+xml')
+
 def quoteattr(value):
 	value = value.replace('&', '&amp;').replace('>', '&gt;').replace('<', '&lt;')
 	value = value.replace('\n', '&#10;').replace('\r', '&#13;').replace('\t', '&#9;')
@@ -450,18 +495,21 @@ def ring_hash(refs):
 def parse_polygon(node_pool, rings, polygon):
 	role = 'outer'
 	for ring in polygon:
-		nodes = []
-		for lonlat in ring:
-			ref = '{} {}'.format(lonlat[1], lonlat[0])
-			if ref in node_pool:
-				node_id = node_pool[ref]
-			else:
-				node_id = node_pool['id']
-				node_pool[ref] = node_id
-				node_pool['id'] = node_id + 1
-			nodes.append(node_id)
-		rings.append([role, nodes])
+		rings.append([role, parse_linestring(node_pool, ring)])
 		role = 'inner'
+
+def parse_linestring(node_pool, linestring):
+	nodes = []
+	for lonlat in linestring:
+		ref = '{} {}'.format(lonlat[1], lonlat[0])
+		if ref in node_pool:
+			node_id = node_pool[ref]
+		else:
+			node_id = node_pool['id']
+			node_pool[ref] = node_id
+			node_pool['id'] = node_id + 1
+		nodes.append(node_id)
+	return nodes
 
 def append_way(way, way2):
 	another = list(way2) # make copy to not modify original list

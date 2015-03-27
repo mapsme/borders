@@ -15,6 +15,8 @@ function init() {
 	map = L.map('map', { editable: true }).setView([30, 0], 3);
 	var hash = new L.Hash(map);
 	L.tileLayer('http://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+	L.tileLayer('http://korona.geog.uni-heidelberg.de/tiles/adminb/x={x}&y={y}&z={z}',
+			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
 	bordersLayer = L.layerGroup();
 	map.addLayer(bordersLayer);
 
@@ -302,14 +304,8 @@ function bOldBorders() {
 	}
 }
 
-function bJOSM() {
-	var b = map.getBounds();
-	var url = getServer('josm') + '?' + $.param({
-		'xmin': b.getWest(),
-		'xmax': b.getEast(),
-		'ymin': b.getSouth(),
-		'ymax': b.getNorth()
-	});
+function importInJOSM(method, data ) {
+	var url = getServer(method) + '?' + $.param(data);
 	$.ajax({
 		url: 'http://127.0.0.1:8111/import',
 		data: { url: url, new_layer: 'true' },
@@ -320,22 +316,24 @@ function bJOSM() {
 	});
 }
 
-function bJosmOld() {
+function bJOSM() {
 	var b = map.getBounds();
-	var url = getServer('josm') + '?' + $.param({
-		'table': OLD_BORDERS_NAME,
+	importInJOSM('josm', {
 		'xmin': b.getWest(),
 		'xmax': b.getEast(),
 		'ymin': b.getSouth(),
 		'ymax': b.getNorth()
 	});
-	$.ajax({
-		url: 'http://127.0.0.1:8111/import',
-		data: { url: url, new_layer: 'true' },
-		complete: function(t) {
-			if( t.status != 200 )
-				window.alert('Please enable remote_control in JOSM');
-		}
+}
+
+function bJosmOld() {
+	var b = map.getBounds();
+	importInJOSM('josm', {
+		'table': OLD_BORDERS_NAME,
+		'xmin': b.getWest(),
+		'xmax': b.getEast(),
+		'ymin': b.getSouth(),
+		'ymax': b.getNorth()
 	});
 }
 
@@ -457,6 +455,19 @@ function bSplitDo() {
 		success: function(data) { if( data.status != 'ok' ) alert(data.status); else updateBorders(); }
 	});
 	bSplitCancel();
+}
+
+function bSplitJosm() {
+	var wkt = '', lls = splitLayer.getLatLngs();
+	for( i = 0; i < lls.length; i++ ) {
+		if( i > 0 )
+			wkt += ',';
+		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
+	}
+	importInJOSM('josmbord', {
+		'name': splitSelected,
+		'line': 'LINESTRING(' + wkt + ')'
+	});
 }
 
 function bSplitCancel() {

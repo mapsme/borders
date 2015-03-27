@@ -32,7 +32,7 @@
 		<div id="panel">
 			<div id="header">
 				<div id="filter">
-					Раскраска по <select size="1" id="f_type" value="size" onchange="filterSelect(this.value)">
+					Раскраска по <select size="1" id="f_type" value="size" onchange="filterSelect()">
 						<option value="size">размеру</option>
 						<option value="topo">топологии</option>
 						<option value="chars">буквам в назв.</option>
@@ -111,6 +111,7 @@
 				Нарисуйте линию через выбранную область, затем нажмите кнопку<br>
 				<div id="s_do">
 					<button onclick="bSplitDo()">Разрезать область</button><br>
+					<button onclick="bSplitJosm()">Границы вдоль — в JOSM</button><br>
 					<button onclick="bSplitAgain()">Нарисовать по-другому</button>
 				</div>
 				<br>

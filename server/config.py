@@ -1,7 +1,7 @@
 # postgresql connection string
 CONNECTION = 'dbname=borders'
 # passed to flask.Debug
-DEBUG = True
+DEBUG = False
 # if the main table is read-only
 READONLY = False
 # main table name
