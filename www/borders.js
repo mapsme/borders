@@ -4,9 +4,10 @@ var FILL_TOO_SMALL = '#0f0';
 var FILL_TOO_BIG = '#800';
 var FILL_ZERO = 'black';
 var OLD_BORDERS_NAME; // filled in checkHasOSM()
+var IMPORT_ENABLED = false;
 
 var map, borders = {}, bordersLayer, selectedId, editing = false;
-var size_good = 5, size_bad = 100;
+var size_good = 5, size_bad = 50;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
 
@@ -23,6 +24,11 @@ function init() {
 		$('#b_josm').css('visibility', map.getZoom() >= 7 ? 'visible' : 'hidden');
 	});
 
+	if( IMPORT_ENABLED ) {
+		$('#filefm').css('display', 'block');
+		var iframe = '<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>';
+		$('#filefm').after(iframe);
+	}
 	document.getElementById('filefm').action = server + '/import';
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
@@ -537,6 +543,7 @@ function bDivide() {
 	divSelected = selectedId;
 	$('#actions').css('display', 'none');
 	$('#d_do').css('display', 'none');
+	$('#d_none').css('display', 'none');
 	$('#divide').css('display', 'block');
 	// pre-fill 'like' and 'where' fields
 	$('#d_like').val(borders[selectedId].name);
@@ -550,6 +557,7 @@ function bDividePreview() {
 		divPreview = null;
 	}
 	$('#d_do').css('display', 'none');
+	$('#d_none').css('display', 'none');
 	$.ajax(server + '/divpreview', {
 		data: {
 			'like': $('#d_like').val(),
@@ -560,15 +568,17 @@ function bDividePreview() {
 }
 
 function bDivideDrawPreview(geojson) {
-	if( !('features' in geojson) || !geojson.features.length )
+	if( !('features' in geojson) || !geojson.features.length ) {
+		$('#d_none').css('display', 'block');
 		return;
+	}
 	divPreview = L.geoJson(geojson, {
 		style: function(f) {
 			return { color: 'blue', weight: 1, fill: false };
 		}
 	});
 	map.addLayer(divPreview);
-	$('#d_count').text(geojson.features.length + ' областей');
+	$('#d_count').text(geojson.features.length);
 	$('#d_do').css('display', 'block');
 }
 

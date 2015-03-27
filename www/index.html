@@ -24,7 +24,7 @@
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
-			#old_action, #josm_old { display: none; }
+			#filefm, #old_action, #josm_old { display: none; }
 		</style>
 	</head>
 	<body onload="init();">
@@ -60,7 +60,6 @@
 				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
 					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();" style="max-width: 100px;">
 				</form>
-				<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>
 				<button onclick="bBackup()">Архив границ</button><br>
 				<div id="old_action">
 					<input type="checkbox" id="old" onchange="bOldBorders()"><label for="old"> старые границы</label>
@@ -133,8 +132,9 @@
 				Like для названия выбранной области <input type="text" id="d_like"><br>
 				Where для субобластей <input type="text" id="d_where"><br>
 				<button onclick="bDividePreview()">Посмотреть субобласти</button><br>
+				<div id="d_none">Нет областей</div>
 				<div id="d_do">
-					<span id="d_count"></span><br>
+					<span id="d_count"></span> областей<br>
 					Префикс <input type="text" id="d_prefix"><br>
 					<button onclick="bDivideDo()">Заменить область</button>
 				</div>
