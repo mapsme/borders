@@ -93,12 +93,18 @@ def query_small_in_bbox():
 @app.route('/tables')
 def check_osm_table():
 	osm = False
+	backup = False
 	old = []
 	try:
 		cur = g.conn.cursor()
 		cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(config.OSM_TABLE))
 		if cur.rowcount == 2:
 			osm = True
+	except psycopg2.Error, e:
+		pass
+	try:
+		cur.execute('select backup, name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(config.BACKUP))
+		backup = True
 	except psycopg2.Error, e:
 		pass
 	for t, tname in config.OTHER_TABLES.iteritems():
@@ -108,7 +114,7 @@ def check_osm_table():
 				old.append(t)
 		except psycopg2.Error, e:
 			pass
-	return jsonify(osm=osm, tables=old, readonly=config.READONLY)
+	return jsonify(osm=osm, tables=old, readonly=config.READONLY, backup=backup)
 
 @app.route('/split')
 def split():

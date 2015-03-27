@@ -51,6 +51,9 @@ function checkHasOSM() {
 				$('#old_action').css('display', 'block');
 				$('#josm_old').css('display', 'inline');
 			}
+			if( !res.backup ) {
+				$('#backups').css('display', 'none');
+			}
 			if( res.readonly ) {
 				$('#action_buttons').css('display', 'none');
 				$('#import_link').css('display', 'none');
