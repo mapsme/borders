@@ -341,7 +341,22 @@ def backup_list():
 	result = []
 	for res in cur:
 		result.append({ 'timestamp': res[0], 'text': res[0], 'count': res[1] })
+	# todo: count number of different objects for the last one
 	return jsonify(backups=result)
+
+@app.route('/backdelete')
+def backup_delete():
+	if config.READONLY:
+		abort(405)
+	ts = request.args.get('timestamp')
+	cur = g.conn.cursor()
+	cur.execute('SELECT count(1) from {} where backup = %s;'.format(config.BACKUP), (ts,))
+	(count,) = cur.fetchone()
+	if count <= 0:
+		return jsonify(status='no such timestamp')
+	cur.execute('DELETE FROM {} WHERE backup = %s;'.format(config.BACKUP), (ts,))
+	g.conn.commit()
+	return jsonify(status='ok')
 
 @app.route('/josm')
 def make_osm():

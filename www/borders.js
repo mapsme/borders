@@ -650,8 +650,16 @@ function updateBackupList(data) {
 		var a = document.createElement('a');
 		a.href = '#';
 		a.onclick = (function(id, name) { return function() { bBackupRestore(id); return false } })(b['timestamp']);
-		list.append(a, $('<br>'));
 		$(a).text(b['text'] + ' (' + b['count'] + ')');
+		if( i > 0 ) {
+			var d = document.createElement('a');
+			d.href = '#';
+			d.onclick = (function(id, name) { return function() { bBackupDelete(id); return false } })(b['timestamp']);
+			$(d).text('[x]');
+			list.append(a, document.createTextNode(' '), d, $('<br>'));
+		} else {
+			list.append(a, $('<br>'));
+		}
 	}
 }
 
@@ -670,4 +678,11 @@ function bBackupRestore(timestamp) {
 	});
 	$('#backup_list').text('');
 	$('#backup_restoring').css('display', 'block');
+}
+
+function bBackupDelete(timestamp) {
+	$.ajax(server + '/backdelete', {
+		data: { 'timestamp': timestamp }
+	});
+	bBackupCancel();
 }
