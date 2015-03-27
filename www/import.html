@@ -3,12 +3,18 @@
 	<head>
 		<meta charset="utf-8">
 		<title>Заливка поправленных границ</title>
+		<script src="config.js"></script>
 	</head>
-	<body>
+	<body onload="init();">
 		<form action="http://127.0.0.1:5000/import" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
 			Импорт <input type="file" accept=".osm,.xml" name="file">
 			<input type="submit">
 		</form>
 		<iframe name="import_frame" width="500" height="200" src="about:blank"></iframe>
+		<script>
+			function init() {
+				document.getElementById('filefm').action = getServer('import');
+			}
+		</script>
 	</body>
 </html>

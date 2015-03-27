@@ -29,15 +29,15 @@ function init() {
 		var iframe = '<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>';
 		$('#filefm').after(iframe);
 	}
-	document.getElementById('filefm').action = server + '/import';
+	document.getElementById('filefm').action = getServer('import');
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
 	checkHasOSM();
-	filterSelect();
+	filterSelect(true);
 }
 
 function checkHasOSM() {
-	$.ajax(server + '/tables', {
+	$.ajax(getServer('tables'), {
 		success: function(res) {
 			if( res.osm )
 				$('#osm_actions').css('display', 'block');
@@ -53,7 +53,7 @@ function checkHasOSM() {
 function updateBorders() {
 	var b = map.getBounds(),
 	    simplified = map.getZoom() < 7 ? 2 : (map.getZoom() < 11 ? 1 : 0);
-	$.ajax(server + '/bbox', {
+	$.ajax(getServer('bbox'), {
 		data: {
 			'simplify' : simplified,
 			'xmin': b.getWest(),
@@ -68,7 +68,7 @@ function updateBorders() {
 
 	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
 		oldBordersLayer.clearLayers();
-		$.ajax(server + '/bbox', {
+		$.ajax(getServer('bbox'), {
 			data: {
 				'table': OLD_BORDERS_NAME,
 				'simplify': simplified,
@@ -107,7 +107,7 @@ function processResult(data) {
 	var b = map.getBounds();
 	if( tooSmallLayer != null ) {
 		tooSmallLayer.clearLayers();
-		$.ajax(server + '/small', {
+		$.ajax(getServer('small'), {
 			data: {
 				'xmin': b.getWest(),
 				'xmax': b.getEast(),
@@ -198,7 +198,7 @@ function selectLayer(e) {
 	$('#rename').css('display', 'none');
 }
 
-function filterSelect() {
+function filterSelect(noRefresh) {
 	value = $('#f_type').val();
 	$('#f_size').css('display', value == 'size' ? 'block' : 'none');
 	$('#f_chars').css('display', value == 'chars' ? 'block' : 'none');
@@ -211,7 +211,8 @@ function filterSelect() {
 		map.removeLayer(tooSmallLayer);
 		tooSmallLayer = null;
 	}
-	updateBorders();
+	if( !noRefresh )
+		updateBorders();
 }
 
 function getColor(props) {
@@ -282,7 +283,7 @@ function bOldBorders() {
 
 function bJOSM() {
 	var b = map.getBounds();
-	var url = server + '/josm?' + $.param({
+	var url = getServer('josm') + '?' + $.param({
 		'xmin': b.getWest(),
 		'xmax': b.getEast(),
 		'ymin': b.getSouth(),
@@ -300,7 +301,7 @@ function bJOSM() {
 
 function bJosmOld() {
 	var b = map.getBounds();
-	var url = server + '/josm?' + $.param({
+	var url = getServer('josm') + '?' + $.param({
 		'table': OLD_BORDERS_NAME,
 		'xmin': b.getWest(),
 		'xmax': b.getEast(),
@@ -345,7 +346,7 @@ function bRename() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$('#rename').css('display', 'none');
-	$.ajax(server + '/rename', {
+	$.ajax(getServer('rename'), {
 		data: { 'name': selectedId, 'newname': $('#b_rename').val() },
 		success: updateBorders
 	});
@@ -354,7 +355,7 @@ function bRename() {
 function bDisable() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	$.ajax(server + (borders[selectedId].disabled ? '/enable' : '/disable'), {
+	$.ajax(getServer(borders[selectedId].disabled ? 'enable' : 'disable'), {
 		data: { 'name': selectedId },
 		success: updateBorders
 	});
@@ -365,7 +366,7 @@ function bDelete() {
 		return;
 	if( !window.confirm('Точно удалить регион ' + selectedId + '?') )
 		return;
-	$.ajax(server + '/delete', {
+	$.ajax(getServer('delete'), {
 		data: { 'name': selectedId },
 		success: updateBorders
 	});
@@ -374,7 +375,7 @@ function bDelete() {
 function sendComment( text ) {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	$.ajax(server + '/comment', {
+	$.ajax(getServer('comment'), {
 		data: { 'name': selectedId, 'comment': text },
 		type: 'POST',
 		success: updateBorders
@@ -429,7 +430,7 @@ function bSplitDo() {
 			wkt += ',';
 		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
 	}
-	$.ajax(server + '/split', {
+	$.ajax(getServer('split'), {
 		data: { 'name': splitSelected, 'line': 'LINESTRING(' + wkt + ')' },
 		datatype: 'json',
 		success: function(data) { if( data.status != 'ok' ) alert(data.status); else updateBorders(); }
@@ -469,7 +470,7 @@ function bJoinSelect(layer) {
 
 function bJoinDo() {
 	if( joinSelected != null && joinAnother != null ) {
-		$.ajax(server + '/join', {
+		$.ajax(getServer('join'), {
 			data: { 'name': joinSelected, 'name2': joinAnother },
 			success: updateBorders
 		});
@@ -496,7 +497,7 @@ function bPoint() {
 
 function bPointList() {
 	var ll = pMarker.getLatLng();
-	$.ajax(server + '/point', {
+	$.ajax(getServer('point'), {
 		data: { 'lat': ll.lat, 'lon': ll.lng },
 		dataType: 'json',
 		success: updatePointList
@@ -521,7 +522,7 @@ function updatePointList(data) {
 function pPointSelect(id, name1) {
 	var name = $('#p_name').val();
 	name = name.replace('*', name1);
-	$.ajax(server + '/from_osm', {
+	$.ajax(getServer('from_osm'), {
 		data: { 'name': name, 'id': id },
 		success: updateBorders
 	});
@@ -558,7 +559,7 @@ function bDividePreview() {
 	}
 	$('#d_do').css('display', 'none');
 	$('#d_none').css('display', 'none');
-	$.ajax(server + '/divpreview', {
+	$.ajax(getServer('divpreview'), {
 		data: {
 			'like': $('#d_like').val(),
 			'query': $('#d_where').val()
@@ -583,7 +584,7 @@ function bDivideDrawPreview(geojson) {
 }
 
 function bDivideDo() {
-	$.ajax(server + '/divide', {
+	$.ajax(getServer('divide'), {
 		data: {
 			'name': divSelected,
 			'prefix': $('#d_prefix').val(),
@@ -608,7 +609,7 @@ function bDivideCancel() {
 function bLargest() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	$.ajax(server + '/chop1', {
+	$.ajax(getServer('chop1'), {
 		data: { 'name': selectedId },
 		success: updateBorders
 	});
@@ -617,7 +618,7 @@ function bLargest() {
 function bHull() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	$.ajax(server + '/hull', {
+	$.ajax(getServer('hull'), {
 		data: { 'name': selectedId },
 		success: updateBorders
 	});
@@ -630,7 +631,7 @@ function bBackup() {
 	$('#backup_save').attr('disabled', false);
 	$('#backup_list').text('');
 	$('#backup').css('display', 'block');
-	$.ajax(server + '/backlist', {
+	$.ajax(getServer('backlist'), {
 		success: updateBackupList
 	});
 }
@@ -664,7 +665,7 @@ function updateBackupList(data) {
 }
 
 function bBackupSave() {
-	$.ajax(server + '/backup', {
+	$.ajax(getServer('backup'), {
 		success: bBackupCancel
 	});
 	$('#backup_save').attr('disabled', true);
@@ -672,7 +673,7 @@ function bBackupSave() {
 }
 
 function bBackupRestore(timestamp) {
-	$.ajax(server + '/restore', {
+	$.ajax(getServer('restore'), {
 		data: { 'timestamp': timestamp },
 		success: function() { bBackupCancel(); updateBorders(); }
 	});
@@ -681,7 +682,7 @@ function bBackupRestore(timestamp) {
 }
 
 function bBackupDelete(timestamp) {
-	$.ajax(server + '/backdelete', {
+	$.ajax(getServer('backdelete'), {
 		data: { 'timestamp': timestamp }
 	});
 	bBackupCancel();

@@ -11,7 +11,7 @@ function statOpen(id) {
 }
 
 function statQuery(id, callback) {
-	$.ajax(server + '/stat', {
+	$.ajax(getServer('stat'), {
 		data: { 'group': id },
 		success: function(data) {
 			callback(data);
