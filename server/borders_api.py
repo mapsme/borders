@@ -1,8 +1,9 @@
 #!/usr/bin/python
-from flask import Flask, g, request, json, jsonify, abort, Response
+from flask import Flask, g, request, json, jsonify, abort, Response, send_file
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
 import psycopg2
+import io, re, zipfile, unicodedata
 import config
 
 try:
@@ -225,8 +226,6 @@ def enable_border():
 
 @app.route('/comment', methods=['POST'])
 def update_comment():
-	if config.READONLY:
-		abort(405)
 	name = request.form['name']
 	comment = request.form['comment']
 	cur = g.conn.cursor()
@@ -682,15 +681,41 @@ def export_poly():
 
 	cur = g.conn.cursor()
 	if xmin and xmax and ymin and ymax:
-		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE not disabled
+		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE disabled = false
 			and ST_Intersects(ST_SetSRID(ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)), 4326), geom);
 			""".format(table=table), (xmin, ymin, xmax, ymax))
 	else:
-		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE not disabled;""".format(table=table))
-	result = []
-	for rec in cur:
-		pass
-	pass
+		cur.execute("""SELECT name, ST_AsGeoJSON(geom, 7) as geometry FROM {table} WHERE disabled = false;""".format(table=table))
+
+	memory_file = io.BytesIO();
+	with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+		for res in cur:
+			geometry = json.loads(res[1])
+			polygons = [geometry['coordinates']] if geometry['type'] == 'Polygon' else geometry['coordinates']
+			# sanitize name, src: http://stackoverflow.com/a/295466/1297601
+			name = res[0].decode('utf-8')
+			name = unicodedata.normalize('NFKD', name)
+			name = name.encode('ascii', 'ignore')
+			name = re.sub('[^\w _-]', '', name).strip()
+			name = name + '.poly'
+
+			poly = io.BytesIO()
+			poly.write(res[0] + '\n')
+			pcounter = 1
+			for polygon in polygons:
+				outer = True
+				for ring in polygon:
+					poly.write('{}\n'.format(pcounter if outer else -pcounter))
+					pcounter = pcounter + 1
+					for coord in ring:
+						poly.write('\t{:E}\t{:E}\n'.format(coord[0], coord[1]))
+					poly.write('END\n')
+					outer = False
+			poly.write('END\n')
+			zf.writestr(name, poly.getvalue())
+			poly.close()
+	memory_file.seek(0)
+	return send_file(memory_file, attachment_filename='borders.zip', as_attachment=True)
 
 @app.route('/stat')
 def statistics():

@@ -18,13 +18,14 @@
 			#actions { visibility: hidden; }
 			#osm_actions { display: none; margin-top: 1em; }
 			#info { margin-top: 2em; }
-			#b_delete, #b_clear { font-size: 8pt; }
+			#b_delete, #b_clear, .back_del { font-size: 8pt; }
 			#rename, #split, #join, #point, #divide, #backup { display: none; }
 			.actions input[type='text'] { width: 150px; }
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
-			#f_topo, #f_chars, #f_comments { font-size: 10pt; }
+			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
 			#filefm, #old_action, #josm_old { display: none; }
+			.h_iframe { display: none; width: 230px; height: 80px; }
 		</style>
 	</head>
 	<body onload="init();">
@@ -64,20 +65,25 @@
 				<div id="old_action">
 					<input type="checkbox" id="old" onchange="bOldBorders()"><label for="old"> старые границы</label>
 				</div>
-				<div>
+				<div id="links">
 					<a href="stat.html">Статистика</a>
+					<a href="import.html" id="import_link">Импорт</a><br>
+					<a href="#" id="poly_bbox">Скачать в poly видимое</a>,
+					<a href="#" id="poly_all">всё</a>
 				</div>
 			</div>
 			<div id="actions" class="actions">
-				<button onclick="bDisable()" id="b_disable">Убрать</button>
-				<a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a><br>
-				<button onclick="bSplit()">Разрезать</button><br>
-				<button onclick="bJoin()">Склеить</button><br>
-				<button onclick="bLargest()">Выделить острова</button><br>
-				<button onclick="bHull()">Единый контур</button><br>
-				<div id="osm_actions">
-					<button onclick="bDivide()">Заменить регионами</button><br>
-					<button onclick="bPoint()">Регион из точки</button><br>
+				<div id="action_buttons">
+					<button onclick="bDisable()" id="b_disable">Убрать</button>
+					<a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a><br>
+					<button onclick="bSplit()">Разрезать</button><br>
+					<button onclick="bJoin()">Склеить</button><br>
+					<button onclick="bLargest()">Выделить острова</button><br>
+					<button onclick="bHull()">Единый контур</button><br>
+					<div id="osm_actions">
+						<button onclick="bDivide()">Заменить регионами</button><br>
+						<button onclick="bPoint()">Регион из точки</button><br>
+					</div>
 				</div>
 
 				<div id="info">

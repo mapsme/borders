@@ -25,11 +25,16 @@ function init() {
 	});
 
 	if( IMPORT_ENABLED ) {
+		$('#import_link').css('display', 'none');
 		$('#filefm').css('display', 'block');
-		var iframe = '<iframe name="import_frame" style="display: none;" width="230" height="80" src="about:blank"></iframe>';
+		$('#filefm').attr('action', getServer('import'));
+		var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
 		$('#filefm').after(iframe);
 	}
-	document.getElementById('filefm').action = getServer('import');
+	$('#poly_all').attr('href', getPolyDownloadLink());
+	$('#poly_bbox').on('mousedown', function() {
+		$(this).attr('href', getPolyDownloadLink(true));
+	});
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
 	checkHasOSM();
@@ -45,6 +50,17 @@ function checkHasOSM() {
 				OLD_BORDERS_NAME = res.tables[0];
 				$('#old_action').css('display', 'block');
 				$('#josm_old').css('display', 'inline');
+			}
+			if( res.readonly ) {
+				$('#action_buttons').css('display', 'none');
+				$('#import_link').css('display', 'none');
+			}
+			if( !res.readonly && IMPORT_ENABLED ) {
+				$('#import_link').css('display', 'none');
+				$('#filefm').css('display', 'block');
+				$('#filefm').attr('action', getServer('import'));
+				var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
+				$('#filefm').after(iframe);
 			}
 		}
 	});
@@ -654,6 +670,7 @@ function updateBackupList(data) {
 		$(a).text(b['text'] + ' (' + b['count'] + ')');
 		if( i > 0 ) {
 			var d = document.createElement('a');
+			d.className = 'back_del';
 			d.href = '#';
 			d.onclick = (function(id, name) { return function() { bBackupDelete(id); return false } })(b['timestamp']);
 			$(d).text('[x]');
@@ -686,4 +703,15 @@ function bBackupDelete(timestamp) {
 		data: { 'timestamp': timestamp }
 	});
 	bBackupCancel();
+}
+
+function getPolyDownloadLink(bbox) {
+	var b = map.getBounds();
+	var data = {
+		'xmin': b.getWest(),
+		'xmax': b.getEast(),
+		'ymin': b.getSouth(),
+		'ymax': b.getNorth()
+	};
+	return getServer('poly') + (bbox ? '?' + $.param(data) : '');
 }
