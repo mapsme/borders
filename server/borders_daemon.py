@@ -1,14 +1,18 @@
 #!/usr/bin/python
-from daemon import runner
 import os, sys
 import time
 import logging
 import psycopg2
+import config
+try:
+	from daemon import runner
+	HAS_DAEMON = True
+except:
+	HAS_DAEMON = False
 
 FILENAME = 'borders-daemon-status.txt'
 #FILEPATH = '/var/run/' + FILENAME
 FILEPATH = '/Users/ilyazverev/Sites/' + FILENAME
-CONNECTION = 'dbname=borders'
 
 class App():
 	def __init__(self):
@@ -40,7 +44,7 @@ class App():
 		return res[0] if res else None
 
 	def run(self):
-		self.conn = psycopg2.connect(CONNECTION)
+		self.conn = psycopg2.connect(config.CONNECTION)
 		self.conn.autocommit = True
 		while True:
 			region = self.find_region()
@@ -61,7 +65,7 @@ def init_logger():
 if __name__ == '__main__':
 	app = App()
 	logger = init_logger()
-	if len(sys.argv) > 1 and sys.argv[1] == 'run':
+	if not HAS_DAEMON or (len(sys.argv) > 1 and sys.argv[1] == 'run'):
 		app.run()
 	else:
 		r = runner.DaemonRunner(app)
