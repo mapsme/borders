@@ -1,4 +1,11 @@
+var MB_LIMIT = 50, MB_LIMIT2 = 80;
+var KM_LIMIT = 50, POINT_LIMIT = 50000;
+
 function statInit() {
+	$('.mb_limit').text(MB_LIMIT);
+	$('.mb_limit2').text(MB_LIMIT2);
+	$('.km_limit').text(KM_LIMIT);
+	$('.point_limit').text(Math.round(POINT_LIMIT / 1000));
 	statQuery('total', statTotal);
 }
 
@@ -80,21 +87,21 @@ function statSizes(data) {
 
 	for( var i = 0; i < data.regions.length; i++ ) {
 		region = data.regions[i];
-		if( region.area > 0 && region.area < 100 )
+		if( region.area > 0 && region.area < KM_LIMIT )
 			list_100km.push(region);
 		if( region.area <= 0 )
 			list_zero.push(region);
-		if( region.nodes > 50000 )
+		if( region.nodes > POINT_LIMIT )
 			list_100kp.push(region);
 		if( region.nodes < 50 )
 			list_100p.push(region);
-		var size_mb = region.size * 8 / 1024 / 1024;
+		var size_mb = region.size * window.BYTES_FOR_NODE / 1024 / 1024;
 		region.size_mb = size_mb;
 		if( size_mb < 1 )
 			list_1mb.push(region);
-		if( size_mb > 50 )
+		if( size_mb > MB_LIMIT )
 			list_50mb.push(region);
-		if( size_mb > 100 )
+		if( size_mb > MB_LIMIT2 )
 			list_100mb.push(region);
 		if( !/^[\x20-\x7F]*$/.test(region.name) )
 			list_bad.push(region);
@@ -137,7 +144,7 @@ function statTopo(data) {
 			list_multi.push(region);
 		if( region.inner > 0 )
 			list_holed.push(region);
-		if( region.outer > 1 && region.min_area > 0 && region.min_area < 100 )
+		if( region.outer > 1 && region.min_area > 0 && region.min_area < KM_LIMIT )
 			list_100km.push(region);
 	}
 

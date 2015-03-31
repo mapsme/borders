@@ -32,15 +32,15 @@
 			<div>
 				Размер MWM до 1 МБ: <span id="sizes_1mb"></span> (<a href="#" onclick="return statOpen('sizes_1mb_list');">список</a>)<br>
 				<div id="sizes_1mb_list" class="h"></div>
-				Размер MWM больше 50 МБ: <span id="sizes_50mb"></span> (<a href="#" onclick="return statOpen('sizes_50mb_list');">список</a>)<br>
+				Размер MWM больше <span class="mb_limit"></span> МБ: <span id="sizes_50mb"></span> (<a href="#" onclick="return statOpen('sizes_50mb_list');">список</a>)<br>
 				<div id="sizes_50mb_list" class="h"></div>
-				Из них больше 100 МБ: <span id="sizes_100mb"></span> (<a href="#" onclick="return statOpen('sizes_100mb_list');">список</a>)<br>
+				Из них больше <span class="mb_limit2"></span> МБ: <span id="sizes_100mb"></span> (<a href="#" onclick="return statOpen('sizes_100mb_list');">список</a>)<br>
 				<div id="sizes_100mb_list" class="h"></div>
 			</div>
 			<div>
-				Регионов меньше 100 км²: <span id="areas_100km"></span> (<a href="#" onclick="return statOpen('areas_100km_list');">список</a>)<br>
+				Регионов меньше <span class="km_limit"></span> км²: <span id="areas_100km"></span> (<a href="#" onclick="return statOpen('areas_100km_list');">список</a>)<br>
 				<div id="areas_100km_list" class="h"></div>
-				Регионов с 50k+ точек в контуре: <span id="areas_50k_points"></span> (<a href="#" onclick="return statOpen('areas_50k_points_list');">список</a>)<br>
+				Регионов от <span class="point_limit"></span> тысяч точек в контуре: <span id="areas_50k_points"></span> (<a href="#" onclick="return statOpen('areas_50k_points_list');">список</a>)<br>
 				<div id="areas_50k_points_list" class="h"></div>
 				Регионов до 50 точек в контуре: <span id="areas_100_points"></span> (<a href="#" onclick="return statOpen('areas_100_points_list');">список</a>)<br>
 				<div id="areas_100_points_list" class="h"></div>
@@ -53,7 +53,7 @@
 			<div id="topo_holes_list" class="h"></div>
 			Регионов из нескольких частей: <span id="topo_multi"></span> (<a href="#" onclick="return statOpen('topo_multi_list');">список</a>)<br>
 			<div id="topo_multi_list" class="h"></div>
-			Регионов с островами меньше 100 км²: <span id="topo_100km"></span> (<a href="#" onclick="return statOpen('topo_100km_list');">список</a>)<br>
+			Регионов с островами меньше <span class="km_limit"></span> км²: <span id="topo_100km"></span> (<a href="#" onclick="return statOpen('topo_100km_list');">список</a>)<br>
 			<div id="topo_100km_list" class="h"></div>
 			<hr>
 		</div>

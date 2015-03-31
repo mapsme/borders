@@ -207,7 +207,7 @@ function selectLayer(e) {
 		if( props['disabled'] )
 			e.target.setStyle({ fillOpacity: 0.01 });
 		$('#b_name').text(props['name']);
-		$('#b_size').text(Math.round(props['count_k'] * 8 / 1024 / 1024) + ' MB');
+		$('#b_size').text(Math.round(props['count_k'] * window.BYTES_FOR_NODE / 1024 / 1024) + ' MB');
 		//$('#b_nodes').text(borders[selectedId].layer.getLatLngs()[0].length);
 		$('#b_nodes').text(props['nodes']);
 		$('#b_date').text(props['modified']);
@@ -244,9 +244,9 @@ function getColor(props) {
 	if( fType == 'size' ) {
 		if( props['count_k'] <= 0 )
 			color = FILL_ZERO;
-		else if( props['count_k'] * 8 < size_good * 1024 * 1024 )
+		else if( props['count_k'] * window.BYTES_FOR_NODE < size_good * 1024 * 1024 )
 			color = FILL_TOO_SMALL;
-		else if( props['count_k'] * 8 > size_bad * 1024 * 1024 )
+		else if( props['count_k'] * window.BYTES_FOR_NODE > size_bad * 1024 * 1024 )
 			color = FILL_TOO_BIG;
 	} else if( fType == 'topo' ) {
 		var rings = countRings([0, 0], props.layer);
