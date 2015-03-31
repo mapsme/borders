@@ -55,7 +55,7 @@ node,way population  text linear
 EOSTYLE
 fi
 
-$OSM2PGSQL --slim --drop --style $OSM2PGSQL_STYLE -d $DATABASE -r o5m $OSM2PGSQL_KEYS $FILTERED
+$OSM2PGSQL --slim --drop --hstore --style $OSM2PGSQL_STYLE -d $DATABASE -r o5m $OSM2PGSQL_KEYS $FILTERED
 RET=$?
 rm $FILTERED
 if [ "$OSM2PGSQL_STYLE_TMP" == "1" ]; then
