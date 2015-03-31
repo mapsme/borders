@@ -15,12 +15,20 @@ then
 fi
 PLANET=$1
 
+if [[ "`uname`" == 'Darwin' ]]; then
+	WHICH='which -s'
+	MKTEMP='mktemp -t '
+else
+	WHICH=which
+	MKTEMP='mktemp --suff='
+fi
+
 # 0. Test for all required tools and files
-if ! which -s psql; then
+if ! $WHICH psql; then
 	echo "Do you have postgresql installed?"
 	exit 1
 fi
-if ! which -s $OSM2PGSQL; then
+if ! $WHICH $OSM2PGSQL; then
 	echo "No osm2pgsql found."
 	exit 1
 fi
@@ -33,7 +41,7 @@ fi
 
 # 1. Filter planet file, leaving only administrative borders (and cities)
 echo Filtering planet
-FILTERED=$(mktemp -t osmadm)
+FILTERED=$(${MKTEMP}osmadm)
 $OSMFILTER $PLANET --keep="boundary=administrative or place=" --out-o5m -o=$FILTERED || exit 3
 
 # 2. Load filtered data into an osm2pgsql database
@@ -41,7 +49,7 @@ echo Loading data into the database
 
 # Creating a style file if we weren't provided with one
 if [ -z "$OSM2PGSQL_STYLE" ]; then
-	OSM2PGSQL_STYLE=$(mktemp -t osm2pgsql_style)
+	OSM2PGSQL_STYLE=$(${MKTEMP}osm2pgsql_style)
 	OSM2PGSQL_STYLE_TMP=1
 	cat > $OSM2PGSQL_STYLE <<EOSTYLE
 way      admin_level text polygon
