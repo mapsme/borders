@@ -308,7 +308,7 @@ function importInJOSM(method, data ) {
 	var url = getServer(method) + '?' + $.param(data);
 	$.ajax({
 		url: 'http://127.0.0.1:8111/import',
-		data: { url: url, new_layer: 'true' },
+		data: { url: url, new_layer: 'true', format: '.osm' },
 		complete: function(t) {
 			if( t.status != 200 )
 				window.alert('Please enable remote_control in JOSM');
