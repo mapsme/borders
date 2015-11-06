@@ -23,5 +23,11 @@ create table borders_backup (
 	primary key (backup, name)
 );
 
+create table points (
+  geom geometry not null,
+  type integer not null default 0
+);
+
 create index border_idx on borders using gist (geom);
 create index tiles_idx on tiles using gist (tile);
+create index points_ids on points using gist (geom);
