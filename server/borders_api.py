@@ -90,6 +90,25 @@ def query_small_in_bbox():
 		result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
 	return jsonify(features=result)
 
+@app.route('/routing')
+def query_routing_points():
+	xmin = request.args.get('xmin')
+	xmax = request.args.get('xmax')
+	ymin = request.args.get('ymin')
+	ymax = request.args.get('ymax')
+	cur = g.conn.cursor()
+	cur.execute('''SELECT ST_AsText(geom), type
+			FROM points
+			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
+		);''', (xmin, ymin, xmax, ymax))
+	result = []
+	for rec in cur:
+                points = rec[0].split()
+                lat = float(points[0].split('(')[1])
+                lon = float(points[1].split(')')[0])
+		result.append({ 'lat': lat, 'lon': lon, 'type': rec[1] })
+	return jsonify(features=result)
+
 @app.route('/tables')
 def check_osm_table():
 	osm = False
