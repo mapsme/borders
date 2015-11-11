@@ -23,7 +23,9 @@ def hello_world():
 
 @app.route('/www/<path:path>')
 def send_js(path):
-        return send_from_directory('../www/', path)
+        if config.DEBUG:
+                return send_from_directory('../www/', path)
+        abort(404)
 
 @app.before_request
 def before_request():
@@ -101,16 +103,13 @@ def query_routing_points():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	cur = g.conn.cursor()
-	cur.execute('''SELECT ST_AsText(geom), type
+	cur.execute('''SELECT ST_X(geom), ST_Y(geom), type
 			FROM points
 			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)
 		);''', (xmin, ymin, xmax, ymax))
 	result = []
 	for rec in cur:
-                points = rec[0].split()
-                lat = float(points[0].split('(')[1])
-                lon = float(points[1].split(')')[0])
-		result.append({ 'lat': lat, 'lon': lon, 'type': rec[1] })
+		result.append({ 'lon': rec[0], 'lat': rec[1], 'type': rec[2] })
 	return jsonify(features=result)
 
 @app.route('/tables')

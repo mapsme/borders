@@ -20,7 +20,7 @@ function init() {
 			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
 	bordersLayer = L.layerGroup();
 	map.addLayer(bordersLayer);
-  routingGroup = new L.FeatureGroup();
+	routingGroup = new L.FeatureGroup();
 
 	map.on('moveend', function() {
 		if( map.getZoom() >= 5 )
@@ -99,8 +99,7 @@ function updateBorders() {
 			'ymax': b.getNorth()
 		},
 		success: processRouting,
-		dataType: 'json',
-		simplified: simplified
+		dataType: 'json'
 	});
 
 	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
@@ -124,16 +123,13 @@ routingTypes = {1: "Border and feature are intersecting several times.",
                 2: "Unknown outgoing feature."};
 
 function processRouting(data) {
-  routingGroup.clearLayers();
-  map.removeLayer(routingGroup);
+	map.removeLayer(routingGroup);
+	routingGroup.clearLayers();
 	for( var f = 0; f < data.features.length; f++ ) {
-    marker = L.marker([data.features[f]["lon"], data.features[f]["lat"]]).addTo(map);
-    marker.bindPopup(routingTypes[data.features[f]["type"]], {
-                  showOnMouseOver: true
-                            });
-    routingGroup.addLayer(marker);
-  }
-  map.addLayer(routingGroup);
+		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]).addTo(routingGroup);
+		marker.bindPopup(routingTypes[data.features[f]["type"]], {showOnMouseOver: true});
+	}
+	map.addLayer(routingGroup);
 }
 
 function processResult(data) {

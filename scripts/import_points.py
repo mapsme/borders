@@ -42,9 +42,9 @@ with open(options.source) as logfile:
                 break
 
 # Print stats.
-print "Found {} points".format(len(points))
-print "There are {} points with no external mwm, and {} points if features that have many border intersections". format(
-        len([a for a in points if a[2] == 2]), len([a for a in points if a[2] == 1])
+print "Found {0} points".format(len(points))
+print "Found {0} ways that do not lead to the external mwm and {1} roads that crossing the border several times.". format(
+        len(filter(lambda a: a[2] == 2, points)), len(filter(lambda a: a[2] == 1, points))
         )
 
 # Commit to the database
@@ -52,9 +52,9 @@ conn = psycopg2.connect(options.connection)
 cursor = conn.cursor()
 
 if options.truncate:
-    print "Truncating  old data..."
+    print "Truncating old data..."
     cursor.execute("TRUNCATE TABLE points")
 
-cursor.execute("INSERT into points (geom, type) VALUES {}".format(",".
-    join(["(ST_GeomFromText('POINT({} {})', 4326), {})".format(*p) for p in points])))
+for p in points:
+    cursor.execute("INSERT into points (geom, type) VALUES (ST_GeomFromText('POINT(%s %s)', 4326), %s)", p)
 conn.commit()
