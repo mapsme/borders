@@ -10,6 +10,7 @@ var map, borders = {}, bordersLayer, selectedId, editing = false, readonly = fal
 var size_good = 5, size_bad = 50;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
+var routingGroup = null;
 
 function init() {
 	map = L.map('map', { editable: true }).setView([30, 0], 3);
@@ -19,6 +20,7 @@ function init() {
 			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
 	bordersLayer = L.layerGroup();
 	map.addLayer(bordersLayer);
+	routingGroup = new L.FeatureGroup();
 
 	map.on('moveend', function() {
 		if( map.getZoom() >= 5 )
@@ -89,6 +91,17 @@ function updateBorders() {
 		simplified: simplified
 	});
 
+	$.ajax(getServer('routing'), {
+		data: {
+			'xmin': b.getWest(),
+			'xmax': b.getEast(),
+			'ymin': b.getSouth(),
+			'ymax': b.getNorth()
+		},
+		success: processRouting,
+		dataType: 'json'
+	});
+
 	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
 		oldBordersLayer.clearLayers();
 		$.ajax(getServer('bbox'), {
@@ -104,6 +117,19 @@ function updateBorders() {
 			dataType: 'json'
 		});
 	}
+}
+
+routingTypes = {1: "Border and feature are intersecting several times.",
+                2: "Unknown outgoing feature."};
+
+function processRouting(data) {
+	map.removeLayer(routingGroup);
+	routingGroup.clearLayers();
+	for( var f = 0; f < data.features.length; f++ ) {
+		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]).addTo(routingGroup);
+		marker.bindPopup(routingTypes[data.features[f]["type"]], {showOnMouseOver: true});
+	}
+	map.addLayer(routingGroup);
 }
 
 function processResult(data) {

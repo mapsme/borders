@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from flask import Flask, g, request, json, jsonify, abort, Response, send_file
+from flask import Flask, g, request, json, jsonify, abort, Response, send_file, send_from_directory
 from flask.ext.cors import CORS
 from flask.ext.compress import Compress
 import psycopg2
@@ -20,6 +20,12 @@ CORS(app)
 @app.route('/')
 def hello_world():
 	return 'Hello <b>World</b>!'
+
+@app.route('/www/<path:path>')
+def send_js(path):
+        if config.DEBUG:
+                return send_from_directory('../www/', path)
+        abort(404)
 
 @app.before_request
 def before_request():
@@ -88,6 +94,22 @@ def query_small_in_bbox():
 	result = []
 	for rec in cur:
 		result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
+	return jsonify(features=result)
+
+@app.route('/routing')
+def query_routing_points():
+	xmin = request.args.get('xmin')
+	xmax = request.args.get('xmax')
+	ymin = request.args.get('ymin')
+	ymax = request.args.get('ymax')
+	cur = g.conn.cursor()
+	cur.execute('''SELECT ST_X(geom), ST_Y(geom), type
+			FROM points
+			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)
+		);''', (xmin, ymin, xmax, ymax))
+	result = []
+	for rec in cur:
+		result.append({ 'lon': rec[0], 'lat': rec[1], 'type': rec[2] })
 	return jsonify(features=result)
 
 @app.route('/tables')
