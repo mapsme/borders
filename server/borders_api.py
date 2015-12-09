@@ -103,10 +103,13 @@ def query_routing_points():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	cur = g.conn.cursor()
-	cur.execute('''SELECT ST_X(geom), ST_Y(geom), type
-			FROM points
-			WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)
-		);''', (xmin, ymin, xmax, ymax))
+        try:
+		cur.execute('''SELECT ST_X(geom), ST_Y(geom), type
+				FROM points
+				WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)
+			);''', (xmin, ymin, xmax, ymax))
+	except psycopg2.Error, e:
+		return jsonify(features=[])
 	result = []
 	for rec in cur:
 		result.append({ 'lon': rec[0], 'lat': rec[1], 'type': rec[2] })

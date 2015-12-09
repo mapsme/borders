@@ -37,10 +37,13 @@ echo Cleaning up tiles table and index
 psql $DATABASE -c "DELETE FROM $TABLE; DROP INDEX IF EXISTS ${TABLE}_idx;"
 
 echo Loading tiles into the database
-pv $PLANET-tiles.csv | python tiles2pg.py -d $DATABASE -t $TABLE
+pv $PLANET-tiles.csv | python "$(dirname "$0")/tiles2pg.py" -d $DATABASE -t $TABLE
 rm $PLANET-tiles.csv
 
 echo Indexing tiles
 psql $DATABASE -c "CREATE INDEX ${TABLE}_idx ON $TABLE USING GIST (tile);"
+
+echo Dumping the table
+pg_dump -t $TABLE $DATABASE | gzip > $PLANET-tiles.sql.gz
 
 echo Done!
