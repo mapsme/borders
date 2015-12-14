@@ -148,6 +148,7 @@ function processRouting(data) {
 	for( var f = 0; f < data.features.length; f++ ) {
 		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]);
 		marker.bindPopup(routingTypes[data.features[f]["type"]], {showOnMouseOver: true});
+                routingGroup.addLayer(marker);
 	}
 }
 
@@ -778,10 +779,10 @@ function getPolyDownloadLink(bbox) {
 }
 
 var crossSelected = null, fcPreview = null;
-var crossingSelected = {};
+var selectedCrossings = {};
 
 function crossingUpdateColor(layer) {
-	layer.setStyle({ color: crossingSelected[layer.crossId] ? 'red' : 'blue' });
+	layer.setStyle({ color: selectedCrossings[layer.crossId] ? 'red' : 'blue' });
 }
 
 function crossingClicked(e) {
@@ -790,17 +791,16 @@ function crossingClicked(e) {
 	var layer = e.target;
 	if( 'crossId' in layer ) {
 		var id = layer.crossId;
-		if( crossingSelected[id] )
-			delete crossingSelected[id];
+		if( selectedCrossings[id] )
+			delete selectedCrossings[id];
 		else
-			crossingSelected[id] = true;
+			selectedCrossings[id] = true;
 		crossingUpdateColor(layer);
 	}
 }
 
 function setBordersSelectable(selectable) {
 	crossingLayer.eachLayer(function(l) {
-		//l.setOptions({ clickable: selectable });
 		l.bringToFront();
 	});
 }
@@ -822,14 +822,14 @@ function selectCrossingByRegion(region) {
 	if( region ) {
 		crossingLayer.eachLayer(function(l) {
 			if( l.crossId && l.crossRegion == region ) {
-				crossingSelected[l.crossId] = true;
+				selectedCrossings[l.crossId] = true;
 				crossingUpdateColor(l);
 			}
 		});
 	} else {
 		crossingLayer.eachLayer(function(l) {
 			if( l.crossId ) {
-				delete crossingSelected[l.crossId];
+				delete selectedCrossings[l.crossId];
 				crossingUpdateColor(l);
 			}
 		});
@@ -847,7 +847,6 @@ function bFixCross() {
 	$('#fc_do').css('display', 'none');
 	$('#fixcross').css('display', 'block');
 	selectCrossingByRegion(crossSelected);
-	// TODO; enable selection
 }
 
 function bFixCrossPreview() {
@@ -860,7 +859,7 @@ function bFixCrossPreview() {
 		data: {
 			'preview': 1,
 			'region': crossSelected,
-			'ids': Object.keys(crossingSelected).join(',')
+			'ids': Object.keys(selectedCrossings).join(',')
 		},
 		success: bFixCrossDrawPreview
 	});
@@ -883,7 +882,7 @@ function bFixCrossDo() {
 	$.ajax(getServer('fixcrossing'), {
 		data: {
 			'region': crossSelected,
-			'ids': Object.keys(crossingSelected).join(',')
+			'ids': Object.keys(selectedCrossings).join(',')
 		},
 		success: updateBorders
 	});
@@ -897,7 +896,7 @@ function bFixCrossCancel() {
 	}
 	crossSelected = null;
 	selectCrossingByRegion(false);
-	crossingSelected = {};
+	selectedCrossings = {};
 	updateBorders();
 	$('#actions').css('display', 'block');
 	$('#fixcross').css('display', 'none');
