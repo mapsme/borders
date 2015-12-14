@@ -24,7 +24,7 @@
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
-			#filefm, #old_action, #josm_old { display: none; }
+			#filefm, #old_action, #josm_old, #cross_actions { display: none; }
 			.h_iframe { display: none; width: 230px; height: 80px; }
 		</style>
 	</head>
@@ -85,6 +85,9 @@
 					<div id="osm_actions">
 						<button onclick="bDivide()">Заменить регионами</button><br>
 						<button onclick="bPoint()">Регион из точки</button><br>
+					</div>
+					<div id="cross_actions">
+						<button onclick="bFixCross()">Исправить меж-mwm</button><br>
 					</div>
 				</div>
 
@@ -157,6 +160,16 @@
 				<div>Или выберите набор границ для восстановления:</div>
 				<div id="backup_list"></div>
 				<button onclick="bBackupCancel()">Вернуться</button>
+			</div>
+			<div id="fixcross" class="action">
+				Границы региона <span id="fc_sel"></span> будут поправлены, чтобы включать в себя подсвеченные красным линии.
+				Кликайте на линии, чтобы изменять их статус.<br>
+				<br>
+				<button onclick="bFixCrossPreview()">Посмотреть, что получится</button><br>
+				<div id="fc_do">
+					<button onclick="bFixCrossDo()">Включить линии в контур</button>
+				</div>
+				<button onclick="bFixCrossCancel()">Вернуться</button>
 			</div>
 		</div>
 		<div id="map"></div>
