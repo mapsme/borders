@@ -11,6 +11,7 @@ var size_good = 5, size_bad = 50;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
 var routingGroup = null;
+var crossingLayer = null;
 
 function init() {
 	map = L.map('map', { editable: true }).setView([30, 0], 3);
@@ -20,7 +21,10 @@ function init() {
 			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
 	bordersLayer = L.layerGroup();
 	map.addLayer(bordersLayer);
-	routingGroup = new L.FeatureGroup();
+	routingGroup = L.layerGroup();
+	map.addLayer(routingGroup);
+	crossingLayer = L.layerGroup();
+	map.addLayer(crossingLayer);
 
 	map.on('moveend', function() {
 		if( map.getZoom() >= 5 )
@@ -55,6 +59,8 @@ function checkHasOSM() {
 				$('#old_action').css('display', 'block');
 				$('#josm_old').css('display', 'inline');
 			}
+			if( res.crossing )
+				$('#cross_actions').css('display', 'block');
 			if( !res.backup ) {
 				$('#backups').css('display', 'none');
 			}
@@ -102,6 +108,21 @@ function updateBorders() {
 		dataType: 'json'
 	});
 
+	if (map.getZoom() >= 7) {
+		$.ajax(getServer('crossing'), {
+			data: {
+				'xmin': b.getWest(),
+				'xmax': b.getEast(),
+				'ymin': b.getSouth(),
+				'ymax': b.getNorth()
+			},
+			success: processCrossing,
+			dataType: 'json'
+		});
+	} else {
+		crossingLayer.clearLayers();
+	}
+
 	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
 		oldBordersLayer.clearLayers();
 		$.ajax(getServer('bbox'), {
@@ -120,16 +141,15 @@ function updateBorders() {
 }
 
 routingTypes = {1: "Border and feature are intersecting several times.",
-                2: "Unknown outgoing feature."};
+		2: "Unknown outgoing feature."};
 
 function processRouting(data) {
-	map.removeLayer(routingGroup);
 	routingGroup.clearLayers();
 	for( var f = 0; f < data.features.length; f++ ) {
-		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]).addTo(routingGroup);
+		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]);
 		marker.bindPopup(routingTypes[data.features[f]["type"]], {showOnMouseOver: true});
+                routingGroup.addLayer(marker);
 	}
-	map.addLayer(routingGroup);
 }
 
 function processResult(data) {
@@ -756,4 +776,128 @@ function getPolyDownloadLink(bbox) {
 		'ymax': b.getNorth()
 	};
 	return getServer('poly') + (bbox ? '?' + $.param(data) : '');
+}
+
+var crossSelected = null, fcPreview = null;
+var selectedCrossings = {};
+
+function crossingUpdateColor(layer) {
+	layer.setStyle({ color: selectedCrossings[layer.crossId] ? 'red' : 'blue' });
+}
+
+function crossingClicked(e) {
+	if( !crossSelected )
+		return;
+	var layer = e.target;
+	if( 'crossId' in layer ) {
+		var id = layer.crossId;
+		if( selectedCrossings[id] )
+			delete selectedCrossings[id];
+		else
+			selectedCrossings[id] = true;
+		crossingUpdateColor(layer);
+	}
+}
+
+function setBordersSelectable(selectable) {
+	crossingLayer.eachLayer(function(l) {
+		l.bringToFront();
+	});
+}
+
+function processCrossing(data) {
+	crossingLayer.clearLayers();
+	for( var f = 0; f < data.features.length; f++ ) {
+		var layer = L.GeoJSON.geometryToLayer(data.features[f].geometry),
+		    props = data.features[f].properties;
+		layer.crossId = '' + props.id;
+		layer.crossRegion = props.region;
+		crossingUpdateColor(layer);
+		layer.on('click', crossingClicked);
+		crossingLayer.addLayer(layer);
+	}
+}
+
+function selectCrossingByRegion(region) {
+	if( region ) {
+		crossingLayer.eachLayer(function(l) {
+			if( l.crossId && l.crossRegion == region ) {
+				selectedCrossings[l.crossId] = true;
+				crossingUpdateColor(l);
+			}
+		});
+	} else {
+		crossingLayer.eachLayer(function(l) {
+			if( l.crossId ) {
+				delete selectedCrossings[l.crossId];
+				crossingUpdateColor(l);
+			}
+		});
+	}
+}
+
+function bFixCross() {
+	if( !selectedId || !(selectedId in borders) )
+		return;
+	setBordersSelectable(false);
+	crossSelected = selectedId;
+	fcPreview = null;
+	$('#actions').css('display', 'none');
+	$('#fc_sel').text(crossSelected);
+	$('#fc_do').css('display', 'none');
+	$('#fixcross').css('display', 'block');
+	selectCrossingByRegion(crossSelected);
+}
+
+function bFixCrossPreview() {
+	if( fcPreview != null ) {
+		map.removeLayer(fcPreview);
+		fcPreview = null;
+	}
+	$('#fc_do').css('display', 'none');
+	$.ajax(getServer('fixcrossing'), {
+		data: {
+			'preview': 1,
+			'region': crossSelected,
+			'ids': Object.keys(selectedCrossings).join(',')
+		},
+		success: bFixCrossDrawPreview
+	});
+}
+
+function bFixCrossDrawPreview(geojson) {
+	if( !('geometry' in geojson) ) {
+		return;
+	}
+	fcPreview = L.geoJson(geojson, {
+		style: function(f) {
+			return { color: 'red', weight: 1, fill: false };
+		}
+	});
+	map.addLayer(fcPreview);
+	$('#fc_do').css('display', 'block');
+}
+
+function bFixCrossDo() {
+	$.ajax(getServer('fixcrossing'), {
+		data: {
+			'region': crossSelected,
+			'ids': Object.keys(selectedCrossings).join(',')
+		},
+		success: updateBorders
+	});
+	bFixCrossCancel();
+}
+
+function bFixCrossCancel() {
+	if( fcPreview != null ) {
+		map.removeLayer(fcPreview);
+		fcPreview = null;
+	}
+	crossSelected = null;
+	selectCrossingByRegion(false);
+	selectedCrossings = {};
+	updateBorders();
+	$('#actions').css('display', 'block');
+	$('#fixcross').css('display', 'none');
 }

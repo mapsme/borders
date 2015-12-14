@@ -31,7 +31,7 @@ def read_multipolygon(f):
 	polygons = []
 	cur_poly = []
 	while True:
-		title = f.readline()
+		title = f.readline().strip()
 		if not title:
 			return None
 		if title == 'END':
@@ -60,7 +60,7 @@ def convert_poly(input_file, cur):
 		wkt = read_multipolygon(f)
 	print '  ', name
 	try:
-		cur.execute('insert into borders (name, geom) values (%s, ST_GeomFromText(%s))', (name, wkt))
+		cur.execute('insert into borders (name, geom, modified) values (%s, ST_GeomFromText(%s), now())', (name, wkt))
 	except psycopg2.Error as e:
 		print wkt
 		raise e
