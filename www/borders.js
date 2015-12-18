@@ -108,13 +108,14 @@ function updateBorders() {
 		dataType: 'json'
 	});
 
-	if (map.getZoom() >= 7) {
+	if (map.getZoom() >= 4) {
 		$.ajax(getServer('crossing'), {
 			data: {
 				'xmin': b.getWest(),
 				'xmax': b.getEast(),
 				'ymin': b.getSouth(),
-				'ymax': b.getNorth()
+				'ymax': b.getNorth(),
+				'points': map.getZoom() >= 8
 			},
 			success: processCrossing,
 			dataType: 'json'
@@ -148,7 +149,7 @@ function processRouting(data) {
 	for( var f = 0; f < data.features.length; f++ ) {
 		marker = L.marker([data.features[f]["lat"], data.features[f]["lon"]]);
 		marker.bindPopup(routingTypes[data.features[f]["type"]], {showOnMouseOver: true});
-                routingGroup.addLayer(marker);
+		routingGroup.addLayer(marker);
 	}
 }
 

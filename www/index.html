@@ -19,7 +19,7 @@
 			#osm_actions { display: none; margin-top: 1em; }
 			#info { margin-top: 2em; }
 			#b_delete, #b_clear, .back_del { font-size: 8pt; }
-			#rename, #split, #join, #point, #divide, #backup { display: none; }
+			#rename, #split, #join, #point, #divide, #backup, #fixcross { display: none; }
 			.actions input[type='text'] { width: 150px; }
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
@@ -161,7 +161,7 @@
 				<div id="backup_list"></div>
 				<button onclick="bBackupCancel()">Вернуться</button>
 			</div>
-			<div id="fixcross" class="action">
+			<div id="fixcross" class="actions">
 				Границы региона <span id="fc_sel"></span> будут поправлены, чтобы включать в себя подсвеченные красным линии.
 				Кликайте на линии, чтобы изменять их статус.<br>
 				<br>

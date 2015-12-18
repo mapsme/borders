@@ -122,10 +122,11 @@ def query_crossing():
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
 	region = request.args.get('region')
+	points = request.args.get('points') == '1'
 	cur = g.conn.cursor()
-	sql = """SELECT id, ST_AsGeoJSON(line, 7) as geometry, region, processed FROM {table}
+	sql = """SELECT id, ST_AsGeoJSON({line}, 7) as geometry, region, processed FROM {table}
 		WHERE line && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)) and processed = 0 {reg};
-		""".format(table=config.CROSSING_TABLE, reg='and region = %s' if region else '')
+		""".format(table=config.CROSSING_TABLE, reg='and region = %s' if region else '', line='line' if not points else 'ST_Centroid(line)')
 	params = [xmin, ymin, xmax, ymax]
 	if region:
 		params.append(region)
