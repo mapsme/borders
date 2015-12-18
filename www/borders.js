@@ -115,7 +115,7 @@ function updateBorders() {
 				'xmax': b.getEast(),
 				'ymin': b.getSouth(),
 				'ymax': b.getNorth(),
-				'points': map.getZoom() >= 8
+				'points': (map.getZoom() < 10 ? 1 : 0)
 			},
 			success: processCrossing,
 			dataType: 'json'
@@ -783,7 +783,8 @@ var crossSelected = null, fcPreview = null;
 var selectedCrossings = {};
 
 function crossingUpdateColor(layer) {
-	layer.setStyle({ color: selectedCrossings[layer.crossId] ? 'red' : 'blue' });
+	if( 'setStyle' in layer )
+		layer.setStyle({ color: selectedCrossings[layer.crossId] ? 'red' : 'blue' });
 }
 
 function crossingClicked(e) {
