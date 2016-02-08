@@ -172,6 +172,16 @@ def check_osm_table():
 		pass
 	return jsonify(osm=osm, tables=old, readonly=config.READONLY, backup=backup, crossing=crossing)
 
+@app.route('/search')
+def search():
+	query = request.args.get('q')
+	cur = g.conn.cursor()
+	cur.execute('select ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) from borders where name like %s limit 1', ('%{0}%'.format(query),))
+	if cur.rowcount > 0:
+		rec = cur.fetchone()
+		return jsonify(bounds=[rec[0], rec[1], rec[2], rec[3]])
+	return jsonify(status='not found')
+
 @app.route('/split')
 def split():
 	if config.READONLY:

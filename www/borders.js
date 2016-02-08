@@ -328,6 +328,26 @@ function countRings( rings, polygon ) {
 	return rings;
 }
 
+function doSearch() {
+  var query = $('#fsearch').val();
+  if( query.length() > 1 ) {
+	$.ajax(getServer('search'), {
+		data: { 'q': query },
+		success: zoomToFound
+	});
+  }
+}
+
+function zoomToFound(result) {
+	$('#fsearch').val('');
+	if( !('bounds' in result))
+		return;
+	var b = result['bounds'];
+	if( b.size() != 4 )
+		return;
+	map.fitBounds([[b[0], b[1]], [b[2], b[3]]]);
+}
+
 function bUpdateColors() {
 	size_good = +$('#r_green').val();
 	if( size_good <= 0 )

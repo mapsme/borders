@@ -20,7 +20,7 @@
 			#info { margin-top: 2em; }
 			#b_delete, #b_clear, .back_del { font-size: 8pt; }
 			#rename, #split, #join, #point, #divide, #backup, #fixcross { display: none; }
-			.actions input[type='text'] { width: 150px; }
+			.actions input[type='text'], .search input[type='text'] { width: 150px; }
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
@@ -170,6 +170,9 @@
 					<button onclick="bFixCrossDo()">Включить линии в контур</button>
 				</div>
 				<button onclick="bFixCrossCancel()">Вернуться</button>
+			</div>
+			<div id="search">
+				Поиск <input type="text" id="fsearch"><button onclick="doSearch()">&#x1f50d;</button>
 			</div>
 		</div>
 		<div id="map"></div>
