@@ -45,6 +45,10 @@ function init() {
 	});
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
+	$('#fsearch').keyup(function(e) {
+		if( e.keyCode == 13 )
+    			$('#b_search').click();
+	});
 	checkHasOSM();
 	filterSelect(true);
 }
