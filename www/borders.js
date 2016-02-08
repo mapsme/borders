@@ -329,13 +329,13 @@ function countRings( rings, polygon ) {
 }
 
 function doSearch() {
-  var query = $('#fsearch').val();
-  if( query.length() > 1 ) {
-	$.ajax(getServer('search'), {
-		data: { 'q': query },
-		success: zoomToFound
-	});
-  }
+	var query = $('#fsearch').val();
+	if( query.length > 1 ) {
+		$.ajax(getServer('search'), {
+			data: { 'q': query },
+			success: zoomToFound
+		});
+	}
 }
 
 function zoomToFound(result) {
@@ -343,9 +343,9 @@ function zoomToFound(result) {
 	if( !('bounds' in result))
 		return;
 	var b = result['bounds'];
-	if( b.size() != 4 )
+	if( b.length != 4 )
 		return;
-	map.fitBounds([[b[0], b[1]], [b[2], b[3]]]);
+	map.fitBounds([[b[1], b[0]], [b[3], b[2]]]);
 }
 
 function bUpdateColors() {
