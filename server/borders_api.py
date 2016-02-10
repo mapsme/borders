@@ -121,7 +121,7 @@ def query_crossing():
 	xmax = request.args.get('xmax')
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
-	region = request.args.get('region').encode('utf-8')
+	region = request.args.get('region', '').encode('utf-8')
 	points = request.args.get('points') == '1'
         rank = request.args.get('rank') or '4'
 	cur = g.conn.cursor()
@@ -326,7 +326,7 @@ def divide():
 	name = request.args.get('name').encode('utf-8')
 	like = request.args.get('like').encode('utf-8')
 	query = request.args.get('query')
-	prefix = request.args.get('prefix').encode('utf-8')
+	prefix = request.args.get('prefix', '').encode('utf-8')
 	if prefix != '':
 		prefix = '{}_'.format(prefix);
 	cur = g.conn.cursor()
