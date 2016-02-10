@@ -121,15 +121,17 @@ def query_crossing():
 	xmax = request.args.get('xmax')
 	ymin = request.args.get('ymin')
 	ymax = request.args.get('ymax')
-	region = request.args.get('region')
+	region = request.args.get('region').encode('utf-8')
 	points = request.args.get('points') == '1'
+        rank = request.args.get('rank') or '4'
 	cur = g.conn.cursor()
 	sql = """SELECT id, ST_AsGeoJSON({line}, 7) as geometry, region, processed FROM {table}
-		WHERE line && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)) and processed = 0 {reg};
+		WHERE line && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)) and processed = 0 {reg} and rank <= %s;
 		""".format(table=config.CROSSING_TABLE, reg='and region = %s' if region else '', line='line' if not points else 'ST_Centroid(line)')
 	params = [xmin, ymin, xmax, ymax]
 	if region:
 		params.append(region)
+        params.append(rank)
 	cur.execute(sql, tuple(params))
 	result = []
 	for rec in cur:
@@ -174,7 +176,7 @@ def check_osm_table():
 
 @app.route('/search')
 def search():
-	query = request.args.get('q')
+	query = request.args.get('q').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('select ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) from borders where name like %s limit 1', ('%{0}%'.format(query),))
 	if cur.rowcount > 0:
@@ -186,7 +188,7 @@ def search():
 def split():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	line = request.args.get('line')
 	cur = g.conn.cursor()
 	# check that we're splitting a single polygon
@@ -224,8 +226,8 @@ def split():
 def join_borders():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
-	name2 = request.args.get('name2')
+	name = request.args.get('name').encode('utf-8')
+	name2 = request.args.get('name2').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from {table} where name = %s) as b2 where name = %s;'.format(table=config.TABLE), (name2, name))
 	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name2,))
@@ -249,7 +251,7 @@ def copy_from_osm():
 	if config.READONLY:
 		abort(405)
 	osm_id = request.args.get('id')
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('insert into {table} (geom, name, modified, count_k) select o.way as way, {name}, now(), -1 from {osm} o where o.osm_id = %s limit 1;'.format(table=config.TABLE, osm=config.OSM_TABLE, name='%s' if name != '' else '%s || o.name'), (name, osm_id))
 	g.conn.commit()
@@ -259,8 +261,8 @@ def copy_from_osm():
 def set_name():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
-	new_name = request.args.get('newname')
+	name = request.args.get('name').encode('utf-8')
+	new_name = request.args.get('newname').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('update {} set name = %s where name = %s;'.format(config.TABLE), (new_name, name))
 	g.conn.commit()
@@ -270,7 +272,7 @@ def set_name():
 def delete_border():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
@@ -280,7 +282,7 @@ def delete_border():
 def disable_border():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('update {} set disabled = true where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
@@ -290,7 +292,7 @@ def disable_border():
 def enable_border():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('update {} set disabled = false where name = %s;'.format(config.TABLE), (name,))
 	g.conn.commit()
@@ -298,8 +300,8 @@ def enable_border():
 
 @app.route('/comment', methods=['POST'])
 def update_comment():
-	name = request.form['name']
-	comment = request.form['comment']
+	name = request.form['name'].encode('utf-8')
+	comment = request.form['comment'].encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('update {} set cmnt = %s where name = %s;'.format(config.TABLE), (comment, name))
 	g.conn.commit()
@@ -307,7 +309,7 @@ def update_comment():
 
 @app.route('/divpreview')
 def divide_preview():
-	like = request.args.get('like')
+	like = request.args.get('like').encode('utf-8')
 	query = request.args.get('query')
 	cur = g.conn.cursor()
 	cur.execute('select name, ST_AsGeoJSON(ST_Simplify(way, 0.01)) as way from {table}, (select way as pway from {table} where name like %s) r where ST_Contains(r.pway, way) and {query};'.format(table=config.OSM_TABLE, query=query), (like,))
@@ -321,10 +323,10 @@ def divide_preview():
 def divide():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
-	like = request.args.get('like')
+	name = request.args.get('name').encode('utf-8')
+	like = request.args.get('like').encode('utf-8')
 	query = request.args.get('query')
-	prefix = request.args.get('prefix')
+	prefix = request.args.get('prefix').encode('utf-8')
 	if prefix != '':
 		prefix = '{}_'.format(prefix);
 	cur = g.conn.cursor()
@@ -343,7 +345,7 @@ def divide():
 def chop_largest_or_farthest():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
 	res = cur.fetchone()
@@ -367,7 +369,7 @@ def chop_largest_or_farthest():
 def draw_hull():
 	if config.READONLY:
 		abort(405)
-	name = request.args.get('name')
+	name = request.args.get('name').encode('utf-8')
 	cur = g.conn.cursor()
 	cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
 	res = cur.fetchone()
@@ -382,7 +384,7 @@ def fix_crossing():
 	if config.READONLY:
 		abort(405)
 	preview = request.args.get('preview') == '1'
-	region = request.args.get('region')
+	region = request.args.get('region').encode('utf-8')
 	if region is None:
 		return jsonify(status='Please specify a region')
 	ids = request.args.get('ids')

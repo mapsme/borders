@@ -8,6 +8,7 @@ var IMPORT_ENABLED = false;
 
 var map, borders = {}, bordersLayer, selectedId, editing = false, readonly = false;
 var size_good = 5, size_bad = 50;
+var maxRank = 1;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
 var routingGroup = null;
@@ -48,6 +49,10 @@ function init() {
 	$('#fsearch').keyup(function(e) {
 		if( e.keyCode == 13 )
     			$('#b_search').click();
+	});
+	$('#b_comment').keyup(function(e) {
+		if( e.keyCode == 13 )
+    			$('#b_comment_send').click();
 	});
 	checkHasOSM();
 	filterSelect(true);
@@ -119,7 +124,8 @@ function updateBorders() {
 				'xmax': b.getEast(),
 				'ymin': b.getSouth(),
 				'ymax': b.getNorth(),
-				'points': (map.getZoom() < 10 ? 1 : 0)
+				'points': (map.getZoom() < 10 ? 1 : 0),
+                                'rank': maxRank
 			},
 			success: processCrossing,
 			dataType: 'json'
@@ -336,7 +342,7 @@ function doSearch() {
 	var query = $('#fsearch').val();
 	if( query.length > 1 ) {
 		$.ajax(getServer('search'), {
-			data: { 'q': query },
+			data: { 'q': encodeURIComponent(query) },
 			success: zoomToFound
 		});
 	}
@@ -379,7 +385,7 @@ function importInJOSM(method, data ) {
 	var url = getServer(method) + '?' + $.param(data);
 	$.ajax({
 		url: 'http://127.0.0.1:8111/import',
-		data: { url: url, new_layer: 'true', format: '.osm' },
+		data: { url: encodeURIComponent(url), new_layer: 'true', format: '.osm' },
 		complete: function(t) {
 			if( t.status != 200 )
 				window.alert('Please enable remote_control in JOSM');
@@ -437,7 +443,7 @@ function bRename() {
 		return;
 	$('#rename').css('display', 'none');
 	$.ajax(getServer('rename'), {
-		data: { 'name': selectedId, 'newname': $('#b_rename').val() },
+		data: { 'name': encodeURIComponent(selectedId), 'newname': encodeURIComponent($('#b_rename').val()) },
 		success: updateBorders
 	});
 }
@@ -446,7 +452,7 @@ function bDisable() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer(borders[selectedId].disabled ? 'enable' : 'disable'), {
-		data: { 'name': selectedId },
+		data: { 'name': encodeURIComponent(selectedId) },
 		success: updateBorders
 	});
 }
@@ -457,7 +463,7 @@ function bDelete() {
 	if( !window.confirm('Точно удалить регион ' + selectedId + '?') )
 		return;
 	$.ajax(getServer('delete'), {
-		data: { 'name': selectedId },
+		data: { 'name': encodeURIComponent(selectedId) },
 		success: updateBorders
 	});
 }
@@ -466,7 +472,7 @@ function sendComment( text ) {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('comment'), {
-		data: { 'name': selectedId, 'comment': text },
+		data: { 'name': encodeURIComponent(selectedId), 'comment': encodeURIComponent(text) },
 		type: 'POST',
 		success: updateBorders
 	});
@@ -521,7 +527,7 @@ function bSplitDo() {
 		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
 	}
 	$.ajax(getServer('split'), {
-		data: { 'name': splitSelected, 'line': 'LINESTRING(' + wkt + ')' },
+		data: { 'name': encodeURIComponent(splitSelected), 'line': encodeURIComponent('LINESTRING(' + wkt + ')') },
 		datatype: 'json',
 		success: function(data) { if( data.status != 'ok' ) alert(data.status); else updateBorders(); }
 	});
@@ -574,7 +580,7 @@ function bJoinSelect(layer) {
 function bJoinDo() {
 	if( joinSelected != null && joinAnother != null ) {
 		$.ajax(getServer('join'), {
-			data: { 'name': joinSelected, 'name2': joinAnother },
+			data: { 'name': encodeURIComponent(joinSelected), 'name2': encodeURIComponent(joinAnother) },
 			success: updateBorders
 		});
 	}
@@ -626,7 +632,7 @@ function pPointSelect(id, name1) {
 	var name = $('#p_name').val();
 	name = name.replace('*', name1);
 	$.ajax(getServer('from_osm'), {
-		data: { 'name': name, 'id': id },
+		data: { 'name': encodeURIComponent(name), 'id': id },
 		success: updateBorders
 	});
 	bPointCancel();
@@ -664,8 +670,8 @@ function bDividePreview() {
 	$('#d_none').css('display', 'none');
 	$.ajax(getServer('divpreview'), {
 		data: {
-			'like': $('#d_like').val(),
-			'query': $('#d_where').val()
+			'like': encodeURIComponent($('#d_like').val()),
+			'query': encodeURIComponent($('#d_where').val())
 		},
 		success: bDivideDrawPreview
 	});
@@ -689,10 +695,10 @@ function bDivideDrawPreview(geojson) {
 function bDivideDo() {
 	$.ajax(getServer('divide'), {
 		data: {
-			'name': divSelected,
-			'prefix': $('#d_prefix').val(),
-			'like': $('#d_like').val(),
-			'query': $('#d_where').val()
+			'name': encodeURIComponent(divSelected),
+			'prefix': encodeURIComponent($('#d_prefix').val()),
+			'like': encodeURIComponent($('#d_like').val()),
+			'query': encodeURIComponent($('#d_where').val())
 		},
 		success: updateBorders
 	});
@@ -713,7 +719,7 @@ function bLargest() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('chop1'), {
-		data: { 'name': selectedId },
+		data: { 'name': encodeURIComponent(selectedId) },
 		success: updateBorders
 	});
 }
@@ -722,7 +728,7 @@ function bHull() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('hull'), {
-		data: { 'name': selectedId },
+		data: { 'name': encodeURIComponent(selectedId) },
 		success: updateBorders
 	});
 }
@@ -884,7 +890,7 @@ function bFixCrossPreview() {
 	$.ajax(getServer('fixcrossing'), {
 		data: {
 			'preview': 1,
-			'region': crossSelected,
+			'region': encodeURIComponent(crossSelected),
 			'ids': Object.keys(selectedCrossings).join(',')
 		},
 		success: bFixCrossDrawPreview
@@ -907,7 +913,7 @@ function bFixCrossDrawPreview(geojson) {
 function bFixCrossDo() {
 	$.ajax(getServer('fixcrossing'), {
 		data: {
-			'region': crossSelected,
+			'region': encodeURIComponent(crossSelected),
 			'ids': Object.keys(selectedCrossings).join(',')
 		},
 		success: updateBorders
