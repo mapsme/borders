@@ -50,9 +50,9 @@ function init() {
 		if( e.keyCode == 13 )
     			$('#b_search').click();
 	});
-	$('#b_comment').keyup(function(e) {
+	$('#b_rename').keyup(function(e) {
 		if( e.keyCode == 13 )
-    			$('#b_comment_send').click();
+			$('#do_rename').click();
 	});
 	checkHasOSM();
 	filterSelect(true);
@@ -125,7 +125,7 @@ function updateBorders() {
 				'ymin': b.getSouth(),
 				'ymax': b.getNorth(),
 				'points': (map.getZoom() < 10 ? 1 : 0),
-                                'rank': maxRank
+				'rank': maxRank
 			},
 			success: processCrossing,
 			dataType: 'json'
