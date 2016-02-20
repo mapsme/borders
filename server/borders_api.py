@@ -178,7 +178,7 @@ def check_osm_table():
 def search():
 	query = request.args.get('q').encode('utf-8')
 	cur = g.conn.cursor()
-	cur.execute('select ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) from borders where name like %s limit 1', ('%{0}%'.format(query),))
+	cur.execute('select ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) from borders where name ilike %s limit 1', ('%{0}%'.format(query),))
 	if cur.rowcount > 0:
 		rec = cur.fetchone()
 		return jsonify(bounds=[rec[0], rec[1], rec[2], rec[3]])
