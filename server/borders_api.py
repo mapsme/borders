@@ -793,7 +793,7 @@ def import_osm():
 		polygons = []
 		for way in outer:
 			rings = [way_to_wkt(nodes, way['nodes'])]
-			for i in range(len(inner)-1, 0, -1):
+			for i in range(len(inner)-1, -1, -1):
 				if bbox_contains(way['bbox'], inner[i]['bbox']):
 					rings.append(way_to_wkt(nodes, inner[i]['nodes']))
 					del inner[i]
