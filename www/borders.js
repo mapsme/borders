@@ -570,7 +570,7 @@ function bJoin() {
 
 // called from selectLayer() when joinSelected is not null
 function bJoinSelect(layer) {
-	if( 'id' in layer && layer.id in borders ) {
+	if( 'id' in layer && layer.id in borders && layer.id != joinSelected ) {
 		joinAnother = layer.id;
 		$('#j_name2').text(joinAnother);
 		$('#j_do').css('display', 'block');
