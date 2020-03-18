@@ -228,6 +228,8 @@ def join_borders():
 		abort(405)
 	name = request.args.get('name').encode('utf-8')
 	name2 = request.args.get('name2').encode('utf-8')
+	if name == name2:
+		return jsonify(status='cannot join region with itself')
 	cur = g.conn.cursor()
 	cur.execute('update {table} set geom = ST_Union(geom, b2.g), count_k = -1 from (select geom as g from {table} where name = %s) as b2 where name = %s;'.format(table=config.TABLE), (name2, name))
 	cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name2,))
