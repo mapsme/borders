@@ -1,13 +1,13 @@
 var STYLE_BORDER = { stroke: true, color: '#03f', weight: 3, fill: true, fillOpacity: 0.1 };
-var STYLE_SELECTED = { stroke: true, color: '#ff3', weight: 3, fill: true, fillOpacity: 0.1 };
+var STYLE_SELECTED = { stroke: true, color: '#ff3', weight: 3, fill: true, fillOpacity: 0.75 };
 var FILL_TOO_SMALL = '#0f0';
 var FILL_TOO_BIG = '#800';
 var FILL_ZERO = 'black';
 var OLD_BORDERS_NAME; // filled in checkHasOSM()
-var IMPORT_ENABLED = false;
+var IMPORT_ENABLED = true;
 
 var map, borders = {}, bordersLayer, selectedId, editing = false, readonly = false;
-var size_good = 5, size_bad = 50;
+var size_good = 50, size_bad = 70;
 var maxRank = 1;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
@@ -17,9 +17,13 @@ var crossingLayer = null;
 function init() {
 	map = L.map('map', { editable: true }).setView([30, 0], 3);
 	var hash = new L.Hash(map);
-	L.tileLayer('http://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
-	L.tileLayer('http://korona.geog.uni-heidelberg.de/tiles/adminb/x={x}&y={y}&z={z}',
-			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
+	L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+	//L.tileLayer('https://b.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+//L.tileLayer('http://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+//	L.tileLayer('http://korona.geog.uni-heidelberg.de/tiles/adminb/x={x}&y={y}&z={z}',
+//			{ attribution: '&copy; GIScience Heidelberg' }).addTo(map);
+//	L.tileLayer('https://tile.cyclestreets.net/boundaries/{z}/{x}/{y}.png',
+//			{ attribution: '&copy; CycleStreets.net' }).addTo(map);
 	bordersLayer = L.layerGroup();
 	map.addLayer(bordersLayer);
 	routingGroup = L.layerGroup();
@@ -33,27 +37,37 @@ function init() {
 		$('#b_josm').css('visibility', map.getZoom() >= 7 ? 'visible' : 'hidden');
 	});
 
-	if( IMPORT_ENABLED ) {
-		$('#import_link').css('display', 'none');
-		$('#filefm').css('display', 'block');
-		$('#filefm').attr('action', getServer('import'));
-		var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
-		$('#filefm').after(iframe);
-	}
 	$('#poly_all').attr('href', getPolyDownloadLink());
 	$('#poly_bbox').on('mousedown', function() {
 		$(this).attr('href', getPolyDownloadLink(true));
 	});
 	$('#r_green').val(size_good);
 	$('#r_red').val(size_bad);
+    $('#hide_import_button').click(function() {
+        $('#import_div').hide();
+        $('#filefm input[type=file]').val('');
+    });
+    $('#h_iframe').load(function() {
+        console.log('frame loaded');
+        var frame_doc = $('#h_iframe')[0].contentWindow.document;
+        var frame_body = $('body', frame_doc);
+        frame_body.css({'font-size': '9pt'});
+        updateBorders();
+    });
 	$('#fsearch').keyup(function(e) {
 		if( e.keyCode == 13 )
     			$('#b_search').click();
 	});
-	$('#b_rename').keyup(function(e) {
+	$('#b_comment').keyup(function(e) {
 		if( e.keyCode == 13 )
-			$('#do_rename').click();
+    			$('#b_comment_send').click();
 	});
+    $('#auto_divide').change(function() {
+        if (this.checked)
+            $('#population_thresholds').show();
+        else
+            $('#population_thresholds').hide();
+    });
 	checkHasOSM();
 	filterSelect(true);
 }
@@ -70,8 +84,8 @@ function checkHasOSM() {
 			}
 			if( res.crossing )
 				$('#cross_actions').css('display', 'block');
-			if( !res.backup ) {
-				$('#backups').css('display', 'none');
+			if( res.backup ) {
+				$('#backups').show();
 			}
 			if( res.readonly ) {
 				$('#action_buttons').css('display', 'none');
@@ -84,7 +98,7 @@ function checkHasOSM() {
 				$('#filefm').css('display', 'block');
 				$('#filefm').attr('action', getServer('import'));
 				var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
-				$('#filefm').after(iframe);
+			//	$('#filefm').after(iframe);
 			}
 		}
 	});
@@ -101,12 +115,12 @@ function updateBorders() {
 			'ymin': b.getSouth(),
 			'ymax': b.getNorth()
 		},
-		success: processResult,
+		success: makeAnswerHandler(processBorders),
 		dataType: 'json',
 		simplified: simplified
 	});
 
-	$.ajax(getServer('routing'), {
+	/*$.ajax(getServer('routing'), {
 		data: {
 			'xmin': b.getWest(),
 			'xmax': b.getEast(),
@@ -125,7 +139,7 @@ function updateBorders() {
 				'ymin': b.getSouth(),
 				'ymax': b.getNorth(),
 				'points': (map.getZoom() < 10 ? 1 : 0),
-				'rank': maxRank
+                                'rank': maxRank
 			},
 			success: processCrossing,
 			dataType: 'json'
@@ -148,7 +162,16 @@ function updateBorders() {
 			success: processOldBorders,
 			dataType: 'json'
 		});
-	}
+	} */
+}
+
+function makeAnswerHandler(on_ok_func) {
+	return function(answer) {
+		if (answer.status !== 'ok')
+			alert(answer.status);
+		else
+			on_ok_func(answer);
+	};
 }
 
 routingTypes = {1: "Border and feature are intersecting several times.",
@@ -163,7 +186,8 @@ function processRouting(data) {
 	}
 }
 
-function processResult(data) {
+function processBorders(data) {
+    data = data.geojson;
 	for( var id in borders ) {
 		if( id != selectedId || !editing ) {
 			bordersLayer.removeLayer(borders[id].layer);
@@ -174,15 +198,22 @@ function processResult(data) {
 	for( var f = 0; f < data.features.length; f++ ) {
 		var layer = L.GeoJSON.geometryToLayer(data.features[f].geometry),
 		    props = data.features[f].properties;
-		props.simplified = this.simplified;
-		if( 'name' in props && props.name != '' )
-			updateBorder(props.name, layer, props);
+        props.simplified = this.simplified;
+        updateBorder(props.id, layer, props);
 	}
 	if( selectedId in borders ) {
 		selectLayer({ target: borders[selectedId].layer });
 	} else {
 		selectLayer(null);
 	}
+
+    [subregionsLayer, clustersLayer,
+        parentLayer, potentialParentLayer].forEach(
+            function(layer) {
+                if (layer)
+                    layer.bringToFront();
+            }
+    );
 
 	var b = map.getBounds();
 	if( tooSmallLayer != null ) {
@@ -259,27 +290,33 @@ function selectLayer(e) {
 	}
 	if( e != null && 'id' in e.target && e.target.id in borders ) {
 		selectedId = e.target.id;
+        if (selectedIdForParentAssigning &&
+                selectedIdForParentAssigning != selectedId) {
+            finishChooseParent();
+        }
 		e.target.setStyle(STYLE_SELECTED);
 		var props = borders[selectedId];
 		if( props['disabled'] )
 			e.target.setStyle({ fillOpacity: 0.01 });
 		$('#b_name').text(props['name']);
-		$('#b_size').text(Math.round(props['count_k'] * window.BYTES_FOR_NODE / 1024 / 1024) + ' MB');
+        $('#b_al').text(props['admin_level'] ? '('+props['admin_level']+')' : '');
+		$('#b_parent_name').text(props['parent_name']);
+		$('#b_size').text(Math.round(props['count_k'] * BYTES_FOR_NODE / 1024 / 1024) + ' MB');
 		//$('#b_nodes').text(borders[selectedId].layer.getLatLngs()[0].length);
 		$('#b_nodes').text(props['nodes']);
 		$('#b_date').text(props['modified']);
 		$('#b_area').text(L.Util.formatNum(props['area'] / 1000000, 2));
 		$('#b_comment').val(props['comment'] || '');
-		$('#b_status').text(props['disabled'] ? 'Отключено' : 'В сборке');
+		//$('#b_status').text(props['disabled'] ? 'Отключено' : 'В сборке');
 		$('#b_disable').text(props['disabled'] ? 'Вернуть' : 'Убрать');
 	} else
 		selectedId = null;
 	$('#actions').css('visibility', selectedId == null ? 'hidden' : 'visible');
-	$('#rename').css('display', 'none');
+	$('#rename').hide();
 }
 
 function filterSelect(noRefresh) {
-	value = $('#f_type').val();
+	var value = $('#f_type').val();
 	$('#f_size').css('display', value == 'size' ? 'block' : 'none');
 	$('#f_chars').css('display', value == 'chars' ? 'block' : 'none');
 	$('#f_comments').css('display', value == 'comments' ? 'block' : 'none');
@@ -295,15 +332,31 @@ function filterSelect(noRefresh) {
 		updateBorders();
 }
 
+var colors = ['red', 'orange', 'yellow', 'lime', 'green', 'olive', 'cyan', 'darkcyan',
+              'blue', 'navy', 'magenta', 'purple', 'deeppink', 'brown'] //'black';
+var alphabet = 'abcdefghijklmnopqrstuvwxyz';
+
+function getCountryColor(props) {
+    var country_name = props.country_name;
+    if (!country_name)
+        return 'black';
+	var firstLetter = country_name[0].toLowerCase();
+    var index = alphabet.indexOf(firstLetter);
+    if (index === -1)
+        return 'black';
+    var indexInColors = index % colors.length;
+    return colors[indexInColors];
+}
+
 function getColor(props) {
 	var color = STYLE_BORDER.color;
-	fType = $('#f_type').val();
+	var fType = $('#f_type').val();
 	if( fType == 'size' ) {
 		if( props['count_k'] <= 0 )
 			color = FILL_ZERO;
-		else if( props['count_k'] * window.BYTES_FOR_NODE < size_good * 1024 * 1024 )
+		else if( props['count_k'] * BYTES_FOR_NODE < size_good * 1024 * 1024 )
 			color = FILL_TOO_SMALL;
-		else if( props['count_k'] * window.BYTES_FOR_NODE > size_bad * 1024 * 1024 )
+		else if( props['count_k'] * BYTES_FOR_NODE > size_bad * 1024 * 1024 )
 			color = FILL_TOO_BIG;
 	} else if( fType == 'topo' ) {
 		var rings = countRings([0, 0], props.layer);
@@ -322,6 +375,9 @@ function getColor(props) {
 		if( props['comment'] && props['comment'] != '' )
 			color = FILL_TOO_BIG;
 	}
+    else if (fType == 'country') {
+        color = getCountryColor(props) 
+    }
 	return color;
 }
 
@@ -381,11 +437,20 @@ function bOldBorders() {
 	}
 }
 
-function importInJOSM(method, data ) {
+function importInJOSM(method, data) {
 	var url = getServer(method) + '?' + $.param(data);
+    var params = [ 
+            ['new_layer', 'true'],
+            ['format', '.osm'],
+            ['layer_name', 'borders_' + Date.now()],
+            ['url', url]
+    ];
+    var params_str = params.map(x => (x[0] + '=' + x[1])).join('&');
 	$.ajax({
-		url: 'http://127.0.0.1:8111/import',
-		data: { url: url, new_layer: 'true', format: '.osm' },
+		url: 'http://127.0.0.1:8111/import?' + encodeURI(params_str),
+        // Don't use ajax 'data' param since the order of 
+        // params in url matters: url=<url> must be the last
+        // otherwise all the rest params would be a part of that url.
 		complete: function(t) {
 			if( t.status != 200 )
 				window.alert('Please enable remote_control in JOSM');
@@ -428,23 +493,43 @@ function bJosmZoom() {
 }
 
 function bImport() {
-	document.getElementById('filefm').submit();
+    if ($('#filefm input[type=file]').val()) {
+        document.querySelector('#filefm').submit();
+        var frame_doc = $('#h_iframe')[0].contentWindow.document;
+        var frame_body = $('body', frame_doc);
+        frame_body.html('<pre>Идёт загрузка...</pre>');
+        $('#import_div').show();
+    }
 }
 
-function bShowRename() {
+function finishRename() {
+    $('#rename_link').html('Название &#9660');
+    $('#rename').hide();
+}
+
+function bToggleRename() {
 	if( !selectedId || !(selectedId in borders) || readonly )
 		return;
-	$('#b_rename').val(borders[selectedId].name);
-	$('#rename').css('display', 'block');
+    var rename_el = $('#rename');
+    if (rename_el.is(':hidden')) {
+        $('#b_rename').val(borders[selectedId].name);
+        $('#rename_link').html('Название &#9650');
+        rename_el.show();
+    }
+    else {
+        finishRename();
+    }
 }
 
 function bRename() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	$('#rename').css('display', 'none');
 	$.ajax(getServer('rename'), {
-		data: { 'name': selectedId, 'newname': $('#b_rename').val() },
-		success: updateBorders
+		data: { 'id': selectedId, 'new_name': $('#b_rename').val() },
+		success: makeAnswerHandler(function () {
+            finishRename();
+            updateBorders();
+        })
 	});
 }
 
@@ -452,7 +537,7 @@ function bDisable() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer(borders[selectedId].disabled ? 'enable' : 'disable'), {
-		data: { 'name': selectedId },
+		data: { 'id': selectedId },
 		success: updateBorders
 	});
 }
@@ -460,19 +545,130 @@ function bDisable() {
 function bDelete() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	if( !window.confirm('Точно удалить регион ' + selectedId + '?') )
+    var name = borders[selectedId].name;
+	if( !window.confirm('Точно удалить регион '
+                         + name + ' (' + selectedId + ')' + '?') )
 		return;
 	$.ajax(getServer('delete'), {
-		data: { 'name': selectedId },
+		data: { 'id': selectedId },
 		success: updateBorders
 	});
+}
+
+var selectedIdForParentAssigning = null;
+var potentialParentLayer = null;
+var potentialParentLayers = {};
+var potentialParents = null;
+
+function finishChooseParent() {
+    if (potentialParentLayer) {
+		map.removeLayer(potentialParentLayer);
+        potentialParentLayer = null;
+    }
+    potentialParentLayers = {};
+    potentialParents = {};
+    selectedIdForParentAssigning = null;
+    $('#potential_parents').empty().hide();
+    $('#parent_link').html('Родитель &#9660:');
+}
+
+function bTogglePotentialParents() {
+    var potentialParentsDiv = $('#potential_parents');
+    if (potentialParentsDiv.is(':visible')) {
+        finishChooseParent(); 
+    }
+    else {
+        if (!selectedId || !(selectedId in borders))
+            return;
+        selectedIdForParentAssigning = selectedId;
+        $('#parent_link').html('Родитель &#9650:');
+        potentialParentsDiv.html('Ожидайте...').show();
+        $.ajax(getServer('potential_parents'), {
+            data: {'id': selectedIdForParentAssigning},
+            success: processPotentialParents
+        });
+    }
+}
+/*
+function clearObject(obj) {
+    for (var k in obj)
+        if (obj.hasOwnProperty(k))
+            delete obj[k];
+}
+*/
+
+function makeShowParent(parent_id) {
+    return function(event) {
+        event.preventDefault();
+        if (!(parent_id in potentialParentLayers)) {
+            potentialParentLayers[parent_id] = L.geoJson(
+                potentialParents[parent_id], {
+                style: function(f) {
+                    return { color: 'blue', weight: 2, fill: false };
+                }
+            });
+        }
+        if (potentialParentLayer) {
+            map.removeLayer(potentialParentLayer);
+        }
+        potentialParentLayer = potentialParentLayers[parent_id];
+        map.addLayer(potentialParentLayer);
+        potentialParentLayer.bringToFront();
+    };
+}
+
+function makeSetParent(parent_id) {
+    return function(event) {
+        event.preventDefault();
+        $.ajax(getServer('set_parent'), {
+            data: {
+                'id': selectedIdForParentAssigning,
+                'parent_id': parent_id
+            },
+            success: makeAnswerHandler(function() {
+                updateBorders();
+                finishChooseParent();
+            })
+        });
+    };
+}
+
+function processPotentialParents(answer) {
+    if (!selectedIdForParentAssigning || !(selectedIdForParentAssigning in borders))
+        return;
+    var parents = answer.parents;
+    potentialParents = {};
+    var potentialParentsDiv = $('#potential_parents');
+    if (parents.length == 0) {
+        potentialParentsDiv.html('Ничего не найдено.');
+        return;
+    } 
+    potentialParentsDiv.html('');
+    var selectedParentId = borders[selectedIdForParentAssigning].parent_id;
+    for (var i = 0; i < parents.length; ++i) {
+        var parent = parents[i];
+        var parent_id = parent.properties.id;
+        potentialParents[parent_id] = parent;
+        var div = $('<div/>').appendTo(potentialParentsDiv);
+        var name = parent.properties.name || '' + parent_id;
+        $('<span>' + name + '</span>').appendTo(div);
+        $('<span> </span>').appendTo(div);
+        $('<a href="#">показать</a>')
+            .click(makeShowParent(parent_id))
+            .appendTo(div);
+        var isCurrentParent = (parent_id === selectedParentId);
+        $('<span> </span>').appendTo(div);
+        $('<a href="#">' + (isCurrentParent ? 'отвязать': 'назначить') + '</a>')
+            .click(makeSetParent(isCurrentParent ? null : parent_id))
+            .appendTo(div);
+    }
 }
 
 function sendComment( text ) {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('comment'), {
-		data: { 'name': selectedId, 'comment': text },
+		data: { 'id': selectedId, 'comment': text },
 		type: 'POST',
 		success: updateBorders
 	});
@@ -494,7 +690,8 @@ function bSplit() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	splitSelected = selectedId;
-	$('#s_sel').text(selectedId);
+    var name = borders[selectedId].name;
+	$('#s_sel').text(name + ' (' + selectedId + ')');
 	$('#actions').css('display', 'none');
 	$('#split').css('display', 'block');
 	map.on('editable:drawing:end', bSplitDrawn);
@@ -521,15 +718,19 @@ function bSplitAgain() {
 
 function bSplitDo() {
 	var wkt = '', lls = splitLayer.getLatLngs();
-	for( i = 0; i < lls.length; i++ ) {
+	for (var i = 0; i < lls.length; i++ ) {
 		if( i > 0 )
 			wkt += ',';
 		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
 	}
 	$.ajax(getServer('split'), {
-		data: { 'name': splitSelected, 'line': 'LINESTRING(' + wkt + ')' },
+		data: {
+            'id': splitSelected,
+            'line': 'LINESTRING(' + wkt + ')',
+            'save_region': $('#save_split_region').prop('checked')
+        },
 		datatype: 'json',
-		success: function(data) { if( data.status != 'ok' ) alert(data.status); else updateBorders(); }
+		success: makeAnswerHandler(updateBorders)
 	});
 	bSplitCancel();
 }
@@ -551,8 +752,8 @@ function bSplitCancel() {
 	map.editTools.stopDrawing();
 	if( splitLayer != null )
 		map.removeLayer(splitLayer);
-	$('#actions').css('display', 'block');
-	$('#split').css('display', 'none');
+	$('#split').hide();
+	$('#actions').show();
 }
 
 var joinSelected = null, joinAnother = null;
@@ -562,7 +763,8 @@ function bJoin() {
 		return;
 	joinSelected = selectedId;
 	joinAnother = null;
-	$('#j_sel').text(selectedId);
+    var name = borders[selectedId].name;
+	$('#j_sel').text(name + '(' + selectedId + ')');
 	$('#actions').css('display', 'none');
 	$('#j_do').css('display', 'none');
 	$('#join').css('display', 'block');
@@ -570,9 +772,10 @@ function bJoin() {
 
 // called from selectLayer() when joinSelected is not null
 function bJoinSelect(layer) {
-	if( 'id' in layer && layer.id in borders ) {
+	if( 'id' in layer && layer.id in borders && layer.id != joinSelected ) {
 		joinAnother = layer.id;
-		$('#j_name2').text(joinAnother);
+        var name2 = borders[joinAnother].name;
+		$('#j_name2').text(name2 + '(' + joinAnother + ')');
 		$('#j_do').css('display', 'block');
 	}
 }
@@ -580,8 +783,8 @@ function bJoinSelect(layer) {
 function bJoinDo() {
 	if( joinSelected != null && joinAnother != null ) {
 		$.ajax(getServer('join'), {
-			data: { 'name': joinSelected, 'name2': joinAnother },
-			success: updateBorders
+			data: { 'id1': joinSelected, 'id2': joinAnother },
+			success: makeAnswerHandler(updateBorders)
 		});
 	}
 	bJoinCancel();
@@ -589,14 +792,76 @@ function bJoinDo() {
 
 function bJoinCancel() {
 	joinSelected = null;
-	$('#actions').css('display', 'block');
-	$('#join').css('display', 'none');
+	$('#join').hide();
+	$('#actions').show();
+}
+
+
+var parentLayer = null;
+
+function bJoinToParent() {
+	if( !selectedId || !(selectedId in borders) )
+		return;
+    var props = borders[selectedId];
+    if (!props['parent_id']) {
+        alert('Это регион верхнего уровня');
+        return; 
+    }
+	joinSelected = selectedId;
+	$('#j_to_parent_sel').text(props['name'] + ' (' + selectedId + ')');
+	$('#j_sel_parent').text(props['parent_name'] + ' (' + props['parent_id'] + ')');
+	$('#actions').hide();
+	$('#join_to_parent').show();
+    
+}
+
+function bJoinToParentPreview() {
+	if (parentLayer != null)  {
+		map.removeLayer(parentLayer);
+		parentLayer = null;
+	}
+    var props = borders[selectedId];
+	var simplified = map.getZoom() < 7 ? 2 : (map.getZoom() < 11 ? 1 : 0);
+    $.ajax(getServer('border'), {
+        data: {'id': props['parent_id'], 'simplify': simplified},
+        success: makeAnswerHandler(processJoinToParentPreview)
+    });
+}
+
+function processJoinToParentPreview(answer) {
+	parentLayer = L.geoJson(answer.geojson, {
+		style: function(f) {
+			return { color: 'black', weight: 2, fill: false };
+		}
+	});
+	map.addLayer(parentLayer);
+    parentLayer.bringToFront();
+}
+
+function bJoinToParentDo() {
+	if( joinSelected != null) {
+		$.ajax(getServer('join_to_parent'), {
+			data: { 'id': joinSelected },
+			success: makeAnswerHandler(updateBorders)
+		});
+	}
+	bJoinToParentCancel();
+}
+
+function bJoinToParentCancel() {
+	joinSelected = null;
+    if (parentLayer != null) {
+        map.removeLayer(parentLayer);
+        parentLayer = null;
+    }
+	$('#actions').show();
+	$('#join_to_parent').hide();
 }
 
 var pMarker = L.marker([0, 0], { draggable: true });
 
 function bPoint() {
-	$('#p_name').val(selectedId && selectedId in borders ? selectedId : '');
+	$('#p_name').val('*');
 	selectLayer(null);
 	$('#actions').css('display', 'none');
 	$('#point').css('display', 'block');
@@ -633,87 +898,138 @@ function pPointSelect(id, name1) {
 	name = name.replace('*', name1);
 	$.ajax(getServer('from_osm'), {
 		data: { 'name': name, 'id': id },
-		success: updateBorders
+		success: makeAnswerHandler(updateBorders)
 	});
 	bPointCancel();
 }
 
 function bPointCancel() {
-	$('#actions').css('display', 'block');
-	$('#point').css('display', 'none');
+	$('#point').hide();
+	$('#actions').show();
 	$('#p_list').text('');
 	map.removeLayer(pMarker);
 }
 
-var divPreview = null, divSelected = null;
+var subregionsLayer = null, 
+    clustersLayer = null,
+    divSelectedId = null;
 
 function bDivide() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
-	divSelected = selectedId;
+	divSelectedId = selectedId;
 	$('#actions').css('display', 'none');
 	$('#d_do').css('display', 'none');
 	$('#d_none').css('display', 'none');
 	$('#divide').css('display', 'block');
 	// pre-fill 'like' and 'where' fields
-	$('#d_like').val(borders[selectedId].name);
+	$('#region_to_divide').text(borders[selectedId].name + ' (' + 
+                     selectedId + ')');
 	$('#d_prefix').val(borders[selectedId].name);
-	$('#d_where').val('admin_level = 4');
+    var next_admin_level = borders[selectedId].admin_level ?
+                           borders[selectedId].admin_level + 1 : null;
+	$('#next_level').val(next_admin_level);
+}
+
+function clearDivideLayers() {
+	if (subregionsLayer != null) {
+		map.removeLayer(subregionsLayer);
+		subregionsLayer = null;
+	}
+	if (clustersLayer != null)  {
+		map.removeLayer(clustersLayer);
+		clustersLayer = null;
+	}
 }
 
 function bDividePreview() {
-	if( divPreview != null ) {
-		map.removeLayer(divPreview);
-		divPreview = null;
-	}
-	$('#d_do').css('display', 'none');
-	$('#d_none').css('display', 'none');
+    var auto_divide = $('#auto_divide').prop('checked');
+    if (auto_divide && (
+                !$('#city_population_thr').val() ||
+                !$('#cluster_population_thr').val())
+    ) {
+        alert('Fill population thresholds');
+        return;
+    }
+    clearDivideLayers();
+	$('#d_do').hide();
+	$('#d_none').hide();
+    var apply_to_similar= $('#apply_to_similar').prop('checked');
+    var params = {
+        'id': divSelectedId,
+	    'next_level': $('#next_level').val(),
+        'auto_divide': auto_divide,
+        'apply_to_similar': apply_to_similar
+	};
+    if (auto_divide) {
+        params['city_population_thr'] = $('#city_population_thr').val();
+        params['cluster_population_thr'] = $('#cluster_population_thr').val();
+    }
 	$.ajax(getServer('divpreview'), {
-		data: {
-			'like': $('#d_like').val(),
-			'query': $('#d_where').val()
-		},
-		success: bDivideDrawPreview
+		data: params,
+		success: makeAnswerHandler(bDivideDrawPreview)
 	});
 }
 
-function bDivideDrawPreview(geojson) {
-	if( !('features' in geojson) || !geojson.features.length ) {
-		$('#d_none').css('display', 'block');
+function bDivideDrawPreview(response) {
+    var subregions = response.subregions;
+    var clusters = response.clusters;
+	if( !('features' in subregions) || !subregions.features.length ) {
+		$('#d_none').show();
 		return;
 	}
-	divPreview = L.geoJson(geojson, {
+	subregionsLayer = L.geoJson(subregions, {
 		style: function(f) {
 			return { color: 'blue', weight: 1, fill: false };
 		}
 	});
-	map.addLayer(divPreview);
-	$('#d_count').text(geojson.features.length);
-	$('#d_do').css('display', 'block');
+	map.addLayer(subregionsLayer);
+    subregionsLayer.bringToFront();
+	if (clusters) { 
+        clustersLayer = L.geoJson(clusters, {
+            style: function(f) {
+                return { color: 'black', weight: 2, fill: false };
+            }
+        });
+        map.addLayer(clustersLayer);
+        clustersLayer.bringToFront();
+    }
+    var subregions_count_text = '' + subregions.features.length + ' подрегионов';
+    if (clusters)
+        subregions_count_text += ', ' + clusters.features.length + ' кластеров'; 
+	$('#d_count').text(subregions_count_text);
+	$('#d_do').show();
 }
 
 function bDivideDo() {
+    var auto_divide = $('#auto_divide').prop('checked');
+    var apply_to_similar= $('#apply_to_similar').prop('checked');
+    var params = {
+        'id': divSelectedId,
+	    'next_level': $('#next_level').val(),
+        'auto_divide': auto_divide,
+        'apply_to_similar': apply_to_similar
+	};
+    if (auto_divide) {
+        params['city_population_thr'] = $('#city_population_thr').val();
+        params['cluster_population_thr'] = $('#cluster_population_thr').val();
+    }
 	$.ajax(getServer('divide'), {
-		data: {
-			'name': divSelected,
-			'prefix': $('#d_prefix').val(),
-			'like': $('#d_like').val(),
-			'query': $('#d_where').val()
-		},
+		data: params,
 		success: updateBorders
 	});
 	bDivideCancel();
 }
 
 function bDivideCancel() {
-	if( divPreview != null ) {
-		map.removeLayer(divPreview);
-		divPreview = null;
-	}
-	divSelected = null;
-	$('#actions').css('display', 'block');
-	$('#divide').css('display', 'none');
+    clearDivideLayers();
+	divSelectedId = null;
+	$('#divide').hide();
+	$('#actions').show();
 }
+
+
+
 
 function bLargest() {
 	if( !selectedId || !(selectedId in borders) )
@@ -729,7 +1045,12 @@ function bHull() {
 		return;
 	$.ajax(getServer('hull'), {
 		data: { 'name': selectedId },
-		success: updateBorders
+		success: function(answer) {
+		    if (answer.status !== 'ok')
+		        alert(answer.status);
+		    else
+		        updateBorders();
+	        }
 	});
 }
 
@@ -798,15 +1119,21 @@ function bBackupDelete(timestamp) {
 	bBackupCancel();
 }
 
-function getPolyDownloadLink(bbox) {
-	var b = map.getBounds();
-	var data = {
-		'xmin': b.getWest(),
-		'xmax': b.getEast(),
-		'ymin': b.getSouth(),
-		'ymax': b.getNorth()
-	};
-	return getServer('poly') + (bbox ? '?' + $.param(data) : '');
+function getPolyDownloadLink(use_bbox) {
+    var downloadLink = getServer('poly');
+
+    if (use_bbox) {
+        var b = map.getBounds();
+        var data = {
+            'xmin': b.getWest(),
+            'xmax': b.getEast(),
+            'ymin': b.getSouth(),
+            'ymax': b.getNorth()
+        };
+        downloadLink += '?' + $.param(data);
+    }
+
+    return downloadLink;
 }
 
 var crossSelected = null, fcPreview = null;
@@ -932,4 +1259,32 @@ function bFixCrossCancel() {
 	updateBorders();
 	$('#actions').css('display', 'block');
 	$('#fixcross').css('display', 'none');
+}
+
+function startOver() {
+    if (confirm('Вы уверены, что хотите начать разбиение сначала?')) {
+        finishChooseParent();
+        bSplitCancel();
+        bJoinCancel();
+	    bJoinToParentCancel();
+    	bPointCancel();
+    	bDivideCancel();
+        bBackupCancel(); 
+	    bFixCrossCancel();
+	    selectLayer(null);
+        $('#wait_start_over').show();
+        $.ajax(getServer('start_over'), {
+            success: makeAnswerHandler(function() {
+                for (var id in borders) {
+                    bordersLayer.removeLayer(borders[id].layer);
+                    delete borders[id];
+                }
+                updateBorders();
+            }),
+            complete: function() {
+                $('#wait_start_over').hide();
+            }
+
+        });
+    }
 }

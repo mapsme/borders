@@ -1,18 +1,22 @@
 # postgresql connection string
-CONNECTION = 'dbname=borders'
+CONNECTION = 'dbname=borders user=borders password=borders host=dbhost port=5432'
 # passed to flask.Debug
-DEBUG = False
+DEBUG = True
 # if the main table is read-only
-READONLY = False
+READONLY = False 
 # main table name
 TABLE = 'borders'
 # from where OSM borders are imported
 OSM_TABLE = 'osm_borders'
-# tables with borders for reference
-OTHER_TABLES = { 'old': 'old_borders' }
+# transit table for autosplitting results
+AUTOSPLIT_TABLE = 'splitting'
+## tables with borders for reference
+OTHER_TABLES = {
+  #'old': 'old_borders' 
+}
 # backup table
 BACKUP = 'borders_backup'
-# table with crossing lines
+## table with crossing lines
 CROSSING_TABLE = 'crossing'
 # area of an island for it to be considered small
 SMALL_KM2 = 10
@@ -21,4 +25,4 @@ JOSM_FORCE_MULTI = True
 # alert instead of json on import error
 IMPORT_ERROR_ALERT = False
 # file to which daemon writes the name of currently processed region
-DAEMON_STATUS_PATH = '/var/www/html/borders-daemon-status.txt'
+DAEMON_STATUS_PATH = '/var/tmp/borders-daemon-status.txt'

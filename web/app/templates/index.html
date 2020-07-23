@@ -3,29 +3,49 @@
 	<head>
 		<meta charset="utf-8">
 		<title>Редактор границ для MAPS.ME</title>
-		<link rel="stylesheet" href="lib/leaflet.css" />
-		<script src="lib/leaflet.js"></script>
-		<script src="lib/Leaflet.Editable.js"></script>
-		<script src="lib/leaflet-hash.js"></script>
-		<script src="lib/jquery-1.11.2.min.js"></script>
-		<script src="config.js"></script>
-		<script src="borders.js"></script>
+		<link rel="stylesheet" href="{{ url_for('static', filename='lib/leaflet.css') }}" />
+		<script src="{{ url_for('static', filename='lib/leaflet.js') }}"></script>
+		<script src="{{ url_for('static', filename='lib/Leaflet.Editable.js') }}"></script>
+		<script src="{{ url_for('static', filename='lib/leaflet-hash.js') }}"></script>
+		<script src="{{ url_for('static', filename='lib/jquery-1.11.2.min.js') }}"></script>
+		<script src="{{ url_for('static', filename='config.js') }}"></script>
+		<script src="{{ url_for('static', filename='borders.js') }}"></script>
 		<style>
 			html, body, #map, #panel { margin: 0; height: 100%; }
-			#panel { width: 250px; float: right; padding: 1em; font-family: sans-serif; }
-			#panel button { font-size: 12pt; margin: 4px 0; }
+			#panel { width: 250px; float: right; padding: 1em; font-family: sans-serif; font-size: 80% }
+			#panel button { font-size: 9pt; margin: 4px 0; background-color: #eee; }
 			#map { margin-right: 250px; }
 			#actions { visibility: hidden; }
 			#osm_actions { display: none; margin-top: 1em; }
-			#info { margin-top: 2em; }
+			#backups { display: none; }
+            #rename, #potential_parents { display: none; margin-left: 10px; }
+            #wait_start_over { display: none; }
+			#info { margin-top: 1em; }
 			#b_delete, #b_clear, .back_del { font-size: 8pt; }
-			#rename, #split, #join, #point, #divide, #backup, #fixcross { display: none; }
+			#split, #join, #join_to_parent, #point,
+                #divide, #backup, #fixcross { display: none; }
 			.actions input[type='text'], #search input[type='text'] { width: 150px; }
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
 			#filefm, #old_action, #josm_old, #cross_actions { display: none; }
-			.h_iframe { display: none; width: 230px; height: 80px; }
+			#h_iframe { display: block; width: 100%; height: 80px; }
+            #start_over, #start_over:hover, #start_over:visited { color: red; }
+            #city_population_thr, #cluster_population_thr { max-width: 80px;}
+            #b_import { max-width: 180px; }
+            #import_div { position: relative; display: none; }
+            #hide_import_button {
+                position: absolute;
+                width: 20px; height: 20px;
+                top: 0; right: 0;
+                background-color: #ccc;
+                text-align: center;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+            } 
+
 		</style>
 	</head>
 	<body onload="init();">
@@ -33,6 +53,7 @@
 			<div id="header">
 				<div id="filter">
 					Раскраска по <select size="1" id="f_type" value="size" onchange="filterSelect()">
+                        <option value="country">стране</option>
 						<option value="size">размеру</option>
 						<option value="topo">топологии</option>
 						<option value="chars">буквам в назв.</option>
@@ -59,8 +80,13 @@
 					<button onclick="bJosmZoom()">&#x1f50d;</button>
 				</div>
 				<form action="" enctype="multipart/form-data" method="post" id="filefm" target="import_frame">
-					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();" style="max-width: 100px;">
+					Импорт <input type="file" accept=".osm,.xml" name="file" id="b_import" onchange="bImport();">
 				</form>
+                <div id="import_div">
+                    <iframe name="import_frame" id="h_iframe" src="about:blank"></iframe>
+                    <div id="hide_import_button"><div>x</div></div>
+                </div>
+
 				<div id="backups">
 					<button onclick="bBackup()">Архив границ</button><br>
 				</div>
@@ -68,10 +94,12 @@
 					<input type="checkbox" id="old" onchange="bOldBorders()"><label for="old"> старые границы</label>
 				</div>
 				<div id="links">
-					<a href="stat.html">Статистика</a>
-					<a href="import.html" id="import_link">Импорт</a><br>
+					<a href="{{ url_for('static', filename='stat.html') }}">Статистика</a>
+					<a href="{{ url_for('static', filename='import.html') }}" id="import_link">Импорт</a><br>
 					<a href="#" id="poly_bbox">Скачать в poly видимое</a>,
-					<a href="#" id="poly_all">всё</a>
+                    <a href="#" id="poly_all">всё</a><br>
+                    <a href="#" id="start_over" onclick="startOver()">Начать заново</a>
+                    <span id="wait_start_over">ожидайте...</span>
 				</div>
 				<div id="search">
 					Поиск <input type="text" id="fsearch"><button id="b_search" onclick="doSearch()">&#x1f50d;</button>
@@ -79,12 +107,14 @@
 			</div>
 			<div id="actions" class="actions">
 				<div id="action_buttons">
-					<button onclick="bDisable()" id="b_disable">Убрать</button>
-					<a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a><br>
-					<button onclick="bSplit()">Разрезать</button><br>
+					<!--button onclick="bDisable()" id="b_disable">Убрать</button-->
+					<!--a href="#" onclick="bDelete(); return false;" id="b_delete">Удалить</a-->
+					<button onclick="bDelete()" id="b_delete">Удалить</button><br>
+					<button onclick="bSplit()">Разрезать</button>
 					<button onclick="bJoin()">Склеить</button><br>
-					<button onclick="bLargest()">Выделить острова</button><br>
-					<button onclick="bHull()">Единый контур</button><br>
+					<button onclick="bJoinToParent()">Склеить всё до родителя</button><br>
+					<button disabled onclick="bLargest()">Выделить острова</button>
+					<button disabled onclick="bHull()">Единый контур</button><br>
 					<div id="osm_actions">
 						<button onclick="bDivide()">Заменить регионами</button><br>
 						<button onclick="bPoint()">Регион из точки</button><br>
@@ -95,28 +125,37 @@
 				</div>
 
 				<div id="info">
-					<b><a href="#" id="name_link" onclick="bShowRename(); return false;">Название:</a></b>
-					<span id="b_name"></span><br>
+					<b><a href="#" id="rename_link" onclick="bToggleRename(); return false;">Название &#9660:</a></b>
+					<span id="b_name"></span>
+                    <span id="b_al"></span><br>
 					<div id="rename">
 						<input type="text" id="b_rename">
-						<button id="do_rename" onclick="bRename()">Переименовать</button>
+						<button onclick="bRename()">Переименовать</button>
 					</div>
+                    <div>
+                        <b><a href="#" id="parent_link" onclick="bTogglePotentialParents(); return false;">Родитель &#9660:</a></b>
+                        <span id="b_parent_name"></span>
+                    </div>
+                    <div id="potential_parents">
+                    </div>
 					<b>Оценка размера:</b> <span id="b_size"></span><br>
 					<b>Последняя правка:</b> <span id="b_date"></span><br>
 					<b>Количество точек:</b> <span id="b_nodes"></span><br>
 					<b>Площадь:</b> <span id="b_area"></span> км²<br>
-					<b>Статус:</b> <span id="b_status"></span><br>
+					<!--b>Статус:</b> <span id="b_status"></span><br-->
 					<b>Комментарий:</b><br>
-					<textarea style="width: 240px; height: 200px;" id="b_comment"></textarea><br>
+					<textarea style="width: 240px; height: 100px;" id="b_comment"></textarea><br>
 					<button id="b_comment_send" onclick="bComment()">Отправить</button>
 					<a href="#" onclick="bClearComment(); return false;" id="b_clear">Очистить</a>
 				</div>
 			</div>
 			<div id="split" class="actions">
 				Выбрана область <span id="s_sel"></span>.<br><br>
-				Нарисуйте линию через выбранную область, затем нажмите кнопку<br>
+				Нарисуйте линию через выбранную область (повторный клик на последней точке для завершения), затем нажмите кнопку<br>
 				<div id="s_do">
-					<button onclick="bSplitDo()">Разрезать область</button><br>
+					<button onclick="bSplitDo()">Разрезать область</button>
+                    <input type="checkbox" id="save_split_region" checked></input>
+                    <label for="save_split_region">Не удалять</label><br>
 					<button onclick="bSplitJosm()">Границы вдоль — в JOSM</button><br>
 					<button onclick="bSplitAgain()">Нарисовать по-другому</button>
 				</div>
@@ -133,6 +172,13 @@
 				<br>
 				<button onclick="bJoinCancel()">Вернуться</button>
 			</div>
+			<div id="join_to_parent" class="actions">
+				Выбрана область <span id="j_to_parent_sel"></span>.<br>
+				Родительская область <span id="j_sel_parent"></span>.<br><br>
+                <button onclick="bJoinToParentPreview()">Посмотреть результат</button><br>
+                <button onclick="bJoinToParentDo()">Склеить всё до родителя</button><br>
+				<button onclick="bJoinToParentCancel()">Вернуться</button>
+			</div>
 			<div id="point" class="actions">
 				Переместите маркер в нужную точку и нажмите<br>
 				<button onclick="bPointList()">Получить список областей</button><br>
@@ -142,15 +188,33 @@
 				<button onclick="bPointCancel()">Вернуться</button>
 			</div>
 			<div id="divide" class="actions">
-				Выбранная область будет заменена вложенными областями в соответствии с запросом.<br>
+				Выбранная область <span id="region_to_divide"></span> 
+                будет заменена вложенными областями уровня
+                <input type="number" id="next_level" min="2" max="12">.<br>
 				<br>
-				Like для названия выбранной области <input type="text" id="d_like"><br>
-				Where для субобластей <input type="text" id="d_where"><br>
-				<button onclick="bDividePreview()">Посмотреть субобласти</button><br>
+                <div>
+                    <input type="checkbox" id="auto_divide" checked>
+                    <label for="auto_divide">Автослияние по населению</label>
+                </div>
+                <div id="population_thresholds">
+                    Порог населения города, региона<br>
+                    <input id="city_population_thr" type="number"
+                        min="0" max="8000000000" value="500000" step="50000">,
+                    <input id="cluster_population_thr" type="number"
+                        min="0" max="8000000000" value="500000" step="50000">
+                </div>
+                <div>
+                    <input type="checkbox" id="apply_to_similar">
+                    <label for="apply_to_similar">
+                        Для всех областей страны того же уровня
+                    </label>
+                </div>
+               	<button onclick="bDividePreview()">Посмотреть субобласти</button><br>
 				<div id="d_none">Нет областей</div>
 				<div id="d_do">
-					<span id="d_count"></span> областей<br>
-					Префикс <input type="text" id="d_prefix"><br>
+					<span id="d_count"></span><br>
+					<!-- Префикс <input type="text" id="d_prefix"><br-->
+
 					<button onclick="bDivideDo()">Заменить область</button>
 				</div>
 				<br>

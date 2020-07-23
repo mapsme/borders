@@ -1,0 +1,8 @@
+FROM tiangolo/uwsgi-nginx-flask:latest
+
+RUN pip install flask_cors flask_compress psycopg2 unidecode
+
+COPY app /app
+COPY ./uwsgi.ini /app
+COPY ./prestart.sh /app
+

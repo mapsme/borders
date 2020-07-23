@@ -1,0 +1,33 @@
+version: "3"
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    container_name: web
+    restart: always
+    depends_on:
+      - db
+    links:
+      - "db:dbhost"
+    ports:
+      - "8081:80"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+  db:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.db
+      args:
+	PLANET_URL: http://generator.testdata.mapsme.cloud.devmail.ru/planet/planet-latest.o5m
+        PLANET_URL_external: https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf
+        PLANET_URL_small: http://download.geofabrik.de/africa/eritrea-latest.osm.pbf
+    container_name: db
+    restart: always
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    

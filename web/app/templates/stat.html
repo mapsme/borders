@@ -3,9 +3,9 @@
 	<head>
 		<meta charset="utf-8">
 		<title>Статистика границ для MAPS.ME</title>
-		<script src="lib/jquery-1.11.2.min.js"></script>
-		<script src="config.js"></script>
-		<script src="stat.js"></script>
+		<script src="{{ url_for('static', filename='lib/jquery-1.11.2.min.js') }}"></script>
+		<script src="{{ url_for('static', filename='config.js') }}"></script>
+		<script src="{{ url_for('static', filename='stat.js') }}"></script>
 		<style>
 			body > div { display: none; margin-bottom: 1em; }
 			#sizes > div { margin-top: 1em; }
