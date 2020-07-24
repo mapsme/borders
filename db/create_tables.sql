@@ -33,7 +33,7 @@ CREATE TABLE borders_backup (
 
 CREATE TABLE splitting (
     osm_border_id BIGINT NOT NULL REFERENCES osm_borders(osm_id), -- reference to parent osm region
-    id BIGINT NOT NULL, -- representative subregion id
+    subregion_ids BIGINT[] NOT NULL,
     city_population_thr INT NOT NULL,
     cluster_population_thr INT NOT NULL,
     geom geometry NOT NULL

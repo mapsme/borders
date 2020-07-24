@@ -4,7 +4,11 @@ import psycopg2
 
 from collections import defaultdict
 
-from config import AUTOSPLIT_TABLE as autosplit_table
+from config import (
+        AUTOSPLIT_TABLE as autosplit_table,
+        TABLE as table,
+        OSM_TABLE as osm_table
+)
 
 
 class DisjointClusterUnion:
@@ -93,11 +97,12 @@ class DisjointClusterUnion:
 
 def enrich_with_population_and_cities(conn, subregions):
     cursor = conn.cursor()
-    cursor.execute("""
+    ids = ','.join(str(x) for x in subregions.keys())
+    cursor.execute(f"""
         SELECT b.osm_id, c.name, c.population
-        FROM osm_borders b, osm_cities c
+        FROM {osm_table} b, osm_cities c
         WHERE b.osm_id IN ({ids}) AND ST_CONTAINS(b.way, c.center)
-        """.format(ids=','.join(str(x) for x in subregions.keys()))
+        """
     )
     for rec in cursor:
         sub_id = int(rec[0])
@@ -110,9 +115,9 @@ def enrich_with_population_and_cities(conn, subregions):
 
 def find_subregions(conn, region_id, next_level):
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT subreg.osm_id, subreg.name
-        FROM osm_borders reg, osm_borders subreg
+        FROM {osm_table} reg, {osm_table} subreg
         WHERE reg.osm_id = %s AND subreg.admin_level = %s AND
               ST_Contains(reg.way, subreg.way)
         """,
@@ -177,18 +182,17 @@ def get_best_cluster_to_join_with(small_cluster_id, dcu: DisjointClusterUnion, c
 
 def calculate_common_border_matrix(conn, subregion_ids):
     cursor = conn.cursor()
+    subregion_ids_str = ','.join(str(x) for x in subregion_ids)
     # ST_Intersection returns 0 if its parameter is a geometry other than
     # LINESTRING or MULTILINESTRING
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT b1.osm_id AS osm_id1, b2.osm_id AS osm_id2,
                ST_Length(geography(ST_Intersection(b1.way, b2.way))) AS intersection
-        FROM osm_borders b1, osm_borders b2
+        FROM {osm_table} b1, {osm_table} b2
         WHERE b1.osm_id IN ({subregion_ids_str}) AND
               b2.osm_id IN ({subregion_ids_str})
               AND b1.osm_id < b2.osm_id
-        """.format(
-            subregion_ids_str=','.join(str(x) for x in subregion_ids),
-        )
+        """
     )
     common_border_matrix = {}  # {subregion_id: { subregion_id: float} } where len > 0
     for rec in cursor:
@@ -243,7 +247,7 @@ def get_union_sql(subregion_ids):
     assert(len(subregion_ids) > 0)
     if len(subregion_ids) == 1:
         return f"""
-            SELECT way FROM osm_borders WHERE osm_id={subregion_ids[0]}
+            SELECT way FROM {osm_table} WHERE osm_id={subregion_ids[0]}
         """
     else:
         return f"""
@@ -306,11 +310,14 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
         """)
     for cluster_id, data in dcu.clusters.items():
         subregion_ids = data['subregion_ids']
+        #subregion_ids_array_str = f"{{','.join(str(x) for x in subregion_ids)}}"
         cluster_geometry_sql = get_union_sql(subregion_ids)
         cursor.execute(f"""
-          INSERT INTO {autosplit_table} (osm_border_id, id, geom, city_population_thr, cluster_population_thr) VALUES (
+          INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
+                                         city_population_thr, cluster_population_thr)
+          VALUES (
             {dcu.region_id},
-            {cluster_id},
+            '{{{','.join(str(x) for x in subregion_ids)}}}',
             ({cluster_geometry_sql}),
             {dcu.city_population_thr},
             {dcu.cluster_population_thr}
@@ -319,96 +326,6 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
     conn.commit()
     
 
-def prepare_bulk_split():
-    need_split = [
-    # large region name, admin_level (2 in most cases), admin_level to split'n'merge, into subregions of what admin_level
-        ('Germany', 2, 4, 6),  #  Half of the country is covered by units of AL=5
-        ('Metropolitan France', 3, 4, 6),
-        ('Spain', 2, 4, 6),
-        ('Portugal', 2, 4, 6),
-        ('Belgium', 2, 4, 6),
-        ('Italy', 2, 4, 6),
-        ('Switzerland', 2, 2, 4),  # has admin_level=5
-        ('Austria', 2, 4, 6),
-        ('Poland', 2, 4, 6),  # 380(!) of AL=6
-        ('Czechia', 2, 6, 7),
-        ('Ukraine', 2, 4, 6),   # should merge back to region=4 level clusters
-        ('United Kingdom', 2, 5, 6),  # whole country is divided by level 4; level 5 is necessary but not comprehensive
-        ('Denmark', 2, 4, 7),
-        ('Norway', 2, 4, 7),
-        ('Sweden', 2, 4, 7),   # though division by level 4 is currently ideal
-        ('Finland', 2, 6, 7),  # though division by level 6 is currently ideal
-        ('Estonia', 2, 2, 6),
-        ('Latvia', 2, 4, 6),  # the whole country takes 56Mb, all 6-level units should merge into 4-level clusters
-        ('Lithuania', 2, 2, 4), # now Lithuania has 2 mwms of size 60Mb each
-        ('Belarus', 2, 2, 4),   # 6 regions + Minsk city. Would it be merged with the region?
-        ('Slovakia', 2, 2, 4),  # there are no subregions 5, 6, 7. Must leave all 8 4-level regions
-        ('Hungary', 2, 5, 6),
-        #('Slovenia', 2, 2, 8),  # no levels 3,4,5,6; level 7 incomplete.
-        ('Croatia', 2, 2, 6),
-        ('Bosnia and Herzegovina', 2, 2, 4), # other levels - 5, 6, 7 - are incomplete.
-        ('Serbia', 2, 4, 6),
-        ('Romania', 2, 2, 4),
-        ('Bulgaria', 2, 2, 4),
-        ('Greece', 2, 4, 5),   # has 7 4-level regions, must merge 5-level to them again
-        ('Ireland', 2, 5, 6),  # 5-level don't cover the whole country! Still...
-        ('Turkey', 2, 3, 4),
-    ]
-    cursor = conn.cursor()
-    regions_subset = need_split # [x for x in need_split if x[0] in ('Norway',)]
-    #cursor.execute("UPDATE osm_borders SET need_split=false WHERE need_split=true")
-    #cursor.execute("UPDATE osm_borders SET parent=null WHERE parent is not null")
-    for country_name, country_level, split_level, lower_level in regions_subset:
-        print(f"start {country_name}")
-        cursor.execute(f"""
-            SELECT osm_id FROM osm_borders 
-            WHERE osm_id < 0 AND admin_level={country_level} AND name=%s
-            """, (country_name,))
-        country_border_id = None
-        for rec in cursor:
-            assert (not country_border_id), f"more than one country {country_name}"
-            country_border_id = int(rec[0])    
-        cursor.execute(f"""
-            UPDATE osm_borders b
-            SET need_split=true,
-            next_admin_level={lower_level},
-            parent = {country_border_id}
-            WHERE parent IS NULL
-                AND osm_id < 0 AND admin_level={split_level} AND ST_Contains(
-                (SELECT way FROM osm_borders WHERE osm_id={country_border_id}),
-                  b.way
-            )""", (country_name,))
-        cursor.execute(f"""
-            UPDATE osm_borders b
-            SET parent = (SELECT osm_id FROM osm_borders
-                          WHERE osm_id < 0 AND admin_level={split_level} AND ST_Contains(way, b.way)
-                            AND osm_id != -72639  -- crunch to exclude double Crimea region
-                         )
-            WHERE parent IS NULL
-                AND osm_id < 0 and admin_level={lower_level} AND ST_Contains(
-                  (SELECT way FROM osm_borders WHERE admin_level={country_level} AND name=%s),
-                  b.way
-                )""",
-            (country_name,))
-        conn.commit()
-
-
-def process_ready_to_split(conn):
-    cursor = conn.cursor()
-    cursor.execute(
-      f"""SELECT osm_id
-          FROM osm_borders
-          WHERE need_split
-            -- AND osm_id IN (-8654)  -- crunch to restrict the whole process to some regions
-            -- AND osm_id < -51701  -- crunch to not process what has been already processed
-          ORDER BY osm_id DESC
-      """
-    )
-    for rec in cursor:
-        region_id = int(rec[0])
-        split_region(region_id)
-
-
 def get_region_and_country_names(conn, region_id):
     #if region_id != -1574364: return
     cursor = conn.cursor()
@@ -416,11 +333,11 @@ def get_region_and_country_names(conn, region_id):
      cursor.execute(
       f"""SELECT name,
           (SELECT name
-           FROM osm_borders
-           WHERE osm_id<0 AND admin_level=2 AND ST_contains(way, b1.way)
+           FROM {osm_table}
+           WHERE admin_level = 2 AND ST_contains(way, b1.way)
           ) AS country_name
           FROM osm_borders b1
-          WHERE osm_id={region_id}
+          WHERE osm_id = {region_id}
             AND b1.osm_id NOT IN (-9086712)  -- crunch, stub to exclude incorrect subregions
       """
      )
@@ -429,8 +346,8 @@ def get_region_and_country_names(conn, region_id):
         conn.rollback()
         cursor.execute(
           f"""SELECT name
-              FROM osm_borders b1
-              WHERE osm_id={region_id}
+              FROM {osm_table} b1
+              WHERE osm_id = {region_id}
           """
         )
         region_name = cursor.fetchone()[0]
@@ -465,7 +382,6 @@ def save_splitting(dcu: DisjointClusterUnion, conn,
         save_splitting_to_file(conn, dcu, filename_prefix)
 
 
-#PREFIX = ''
 GENERATE_ALL_POLY=False
 FOLDER='split_results'
 #CITY_POPULATION_THR = 500000
@@ -473,16 +389,6 @@ FOLDER='split_results'
 
 if __name__ == '__main__':
     conn = psycopg2.connect("dbname=az_gis3")
-    prepare_bulk_split()
-
-    import sys; sys.exit()
-
-    process_ready_to_split(conn)
-    #with open('splitting-162050.json') as f:
-    import sys; sys.exit()
-    #    clusters = json.load(f)
-    #make_polys(clusters)
-    #import sys; sys.exit()
 
     PREFIX = "UBavaria"
     CITY_POPULATION_THR = 500000

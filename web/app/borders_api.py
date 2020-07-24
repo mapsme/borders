@@ -19,10 +19,11 @@ from flask_compress import Compress
 import psycopg2
 
 import config
-from auto_split import prepare_bulk_split, split_region
+from auto_split import split_region
 from countries_structure import (
     CountryStructureException,
     create_countries_initial_structure,
+    get_osm_border_name_by_osm_id,
 )
 
 try:
@@ -358,7 +359,7 @@ def get_parent_region_id(region_id):
         """, (region_id,)
     )
     rec = cursor.fetchone()
-    parent_id = int(rec[0]) if rec[0] is not None else None
+    parent_id = int(rec[0]) if rec and rec[0] is not None else None
     return parent_id
 
 def get_child_region_ids(region_id):
@@ -381,7 +382,7 @@ def join_to_parent():
     region_id = int(request.args.get('id'))
     parent_id = get_parent_region_id(region_id)
     if not parent_id:
-        return jsonify(status=f'Region {region_id} has no parent')
+        return jsonify(status=f'Region {region_id} does not exist or has no parent')
     cursor = g.conn.cursor()
     descendants = [[parent_id]]  # regions ordered by hierarchical level
 
@@ -686,13 +687,13 @@ def get_clusters_one(region_id, next_level, thresholds):
         """
     splitting_sql_params = (region_id,) + thresholds
     cursor.execute(f"""
-        SELECT id FROM {autosplit_table}
+        SELECT 1 FROM {autosplit_table}
         WHERE {where_clause}
         """, splitting_sql_params)
     if cursor.rowcount == 0:
         split_region(g.conn, region_id, next_level, thresholds)
     cursor.execute(f"""
-        SELECT id, ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
+        SELECT subregion_ids[1], ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
         FROM {autosplit_table}
         WHERE {where_clause}
         """, splitting_sql_params)
@@ -781,7 +782,7 @@ def divide_into_clusters(region_ids, next_level, thresholds):
             """
         splitting_sql_params = (region_id,) + thresholds
         cursor.execute(f"""
-            SELECT id FROM {autosplit_table}
+            SELECT 1 FROM {autosplit_table}
             WHERE {where_clause}
             """, splitting_sql_params)
         if cursor.rowcount == 0:
@@ -790,19 +791,27 @@ def divide_into_clusters(region_ids, next_level, thresholds):
         free_id = get_free_id()
         counter = 0
         cursor.execute(f"""
-            SELECT id
+            SELECT subregion_ids
             FROM {autosplit_table} WHERE {where_clause}
             """, splitting_sql_params)
+        if cursor.rowcount == 1:
+            continue
         for rec in cursor:
-            cluster_id = rec[0]
-            counter += 1
-            name = f"{base_name}_{counter}"
+            subregion_ids = rec[0]
+            cluster_id = subregion_ids[0]
+            if len(subregion_ids) == 1:
+                subregion_id = cluster_id
+                name = get_osm_border_name_by_osm_id(g.conn, subregion_id)
+            else:
+                counter += 1
+                free_id -= 1
+                subregion_id = free_id
+                name = f"{base_name}_{counter}"
             insert_cursor.execute(f"""
                 INSERT INTO {table} (id, name, parent_id, geom, modified, count_k)
-                SELECT {free_id}, '{name}', osm_border_id, geom, now(), -1
-                FROM {autosplit_table} WHERE id = %s AND {where_clause}
-                """, (cluster_id,) + splitting_sql_params)
-            free_id -= 1
+                SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1
+                FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
+                """, (name, cluster_id,) + splitting_sql_params)
     g.conn.commit()
     return jsonify(status='ok')
 

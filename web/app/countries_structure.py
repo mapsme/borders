@@ -314,7 +314,7 @@ def _make_country_structure(conn, country_osm_id):
     names = {}  # osm_id => osm name
     parents = {}  # osm_id => parent_osm_id
 
-    country_name = _get_osm_border_name_by_osm_id(conn, country_osm_id)
+    country_name = get_osm_border_name_by_osm_id(conn, country_osm_id)
     names[country_osm_id] = country_name
     parents[country_osm_id] = None
 
@@ -353,7 +353,7 @@ def create_countries_initial_structure(conn):
         _make_country_structure(conn, rec[0])
     conn.commit()
 
-def _get_osm_border_name_by_osm_id(conn, osm_id):
+def get_osm_border_name_by_osm_id(conn, osm_id):
     cursor = conn.cursor()
     cursor.execute(f"""
         SELECT name FROM {osm_table}
