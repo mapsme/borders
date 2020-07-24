@@ -376,7 +376,7 @@ function getColor(props) {
 			color = FILL_TOO_BIG;
 	}
     else if (fType == 'country') {
-        color = getCountryColor(props) 
+        color = getCountryColor(props);
     }
 	return color;
 }
@@ -439,7 +439,7 @@ function bOldBorders() {
 
 function importInJOSM(method, data) {
 	var url = getServer(method) + '?' + $.param(data);
-    var params = [ 
+    var params = [
             ['new_layer', 'true'],
             ['format', '.osm'],
             ['layer_name', 'borders_' + Date.now()],
@@ -448,7 +448,7 @@ function importInJOSM(method, data) {
     var params_str = params.map(x => (x[0] + '=' + x[1])).join('&');
 	$.ajax({
 		url: 'http://127.0.0.1:8111/import?' + encodeURI(params_str),
-        // Don't use ajax 'data' param since the order of 
+        // Don't use ajax 'data' param since the order of
         // params in url matters: url=<url> must be the last
         // otherwise all the rest params would be a part of that url.
 		complete: function(t) {
@@ -575,7 +575,7 @@ function finishChooseParent() {
 function bTogglePotentialParents() {
     var potentialParentsDiv = $('#potential_parents');
     if (potentialParentsDiv.is(':visible')) {
-        finishChooseParent(); 
+        finishChooseParent();
     }
     else {
         if (!selectedId || !(selectedId in borders))
@@ -642,7 +642,7 @@ function processPotentialParents(answer) {
     if (parents.length == 0) {
         potentialParentsDiv.html('Ничего не найдено.');
         return;
-    } 
+    }
     potentialParentsDiv.html('');
     var selectedParentId = borders[selectedIdForParentAssigning].parent_id;
     for (var i = 0; i < parents.length; ++i) {
@@ -805,14 +805,13 @@ function bJoinToParent() {
     var props = borders[selectedId];
     if (!props['parent_id']) {
         alert('Это регион верхнего уровня');
-        return; 
+        return;
     }
 	joinSelected = selectedId;
 	$('#j_to_parent_sel').text(props['name'] + ' (' + selectedId + ')');
 	$('#j_sel_parent').text(props['parent_name'] + ' (' + props['parent_id'] + ')');
 	$('#actions').hide();
 	$('#join_to_parent').show();
-    
 }
 
 function bJoinToParentPreview() {
@@ -910,7 +909,7 @@ function bPointCancel() {
 	map.removeLayer(pMarker);
 }
 
-var subregionsLayer = null, 
+var subregionsLayer = null,
     clustersLayer = null,
     divSelectedId = null;
 
@@ -918,14 +917,13 @@ function bDivide() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	divSelectedId = selectedId;
-	$('#actions').css('display', 'none');
-	$('#d_do').css('display', 'none');
-	$('#d_none').css('display', 'none');
-	$('#divide').css('display', 'block');
+	$('#actions').hide();
+	$('#d_count').hide();
+	$('#b_divide').hide();
+	$('#divide').show();
 	// pre-fill 'like' and 'where' fields
-	$('#region_to_divide').text(borders[selectedId].name + ' (' + 
+	$('#region_to_divide').text(borders[selectedId].name + ' (' +
                      selectedId + ')');
-	$('#d_prefix').val(borders[selectedId].name);
     var next_admin_level = borders[selectedId].admin_level ?
                            borders[selectedId].admin_level + 1 : null;
 	$('#next_level').val(next_admin_level);
@@ -952,8 +950,8 @@ function bDividePreview() {
         return;
     }
     clearDivideLayers();
-	$('#d_do').hide();
-	$('#d_none').hide();
+	$('#d_count').hide();
+	$('#b_divide').hide();
     var apply_to_similar= $('#apply_to_similar').prop('checked');
     var params = {
         'id': divSelectedId,
@@ -975,7 +973,7 @@ function bDivideDrawPreview(response) {
     var subregions = response.subregions;
     var clusters = response.clusters;
 	if( !('features' in subregions) || !subregions.features.length ) {
-		$('#d_none').show();
+		$('#d_count').text('Нет областей').show();
 		return;
 	}
 	subregionsLayer = L.geoJson(subregions, {
@@ -985,7 +983,7 @@ function bDivideDrawPreview(response) {
 	});
 	map.addLayer(subregionsLayer);
     subregionsLayer.bringToFront();
-	if (clusters) { 
+	if (clusters) {
         clustersLayer = L.geoJson(clusters, {
             style: function(f) {
                 return { color: 'black', weight: 2, fill: false };
@@ -995,10 +993,16 @@ function bDivideDrawPreview(response) {
         clustersLayer.bringToFront();
     }
     var subregions_count_text = '' + subregions.features.length + ' подрегионов';
-    if (clusters)
-        subregions_count_text += ', ' + clusters.features.length + ' кластеров'; 
-	$('#d_count').text(subregions_count_text);
-	$('#d_do').show();
+    var show_divide_button = (subregions.features.length > 1);
+    if (clusters) {
+        subregions_count_text += ', ' + clusters.features.length + ' кластеров';
+        show_divide_button = (clusters.features.length > 1);
+    }
+	$('#d_count').text(subregions_count_text).show();
+    if (show_divide_button)
+        $('#b_divide').show();
+    else
+        $('#b_divide').hide();
 }
 
 function bDivideDo() {
@@ -1269,7 +1273,7 @@ function startOver() {
 	    bJoinToParentCancel();
     	bPointCancel();
     	bDivideCancel();
-        bBackupCancel(); 
+        bBackupCancel();
 	    bFixCrossCancel();
 	    selectLayer(null);
         $('#wait_start_over').show();
