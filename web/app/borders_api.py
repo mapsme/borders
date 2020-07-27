@@ -611,27 +611,29 @@ def get_similar_regions(region_id, only_leaves=False):
                                   if is_leaf(r_id)]
     return similar_region_ids
 
-
-NON_ADMINISTRATIVE_REGION_ERROR = ("Not allowed to split non-administrative"
-                                   " border into administrative subregions")
-
 @app.route('/divpreview')
 def divide_preview():
     region_id = int(request.args.get('id'))
-    if not is_administrative_region(region_id):
-        return jsonify(status=NON_ADMINISTRATIVE_REGION_ERROR)
-    next_level = int(request.args.get('next_level'))
-    apply_to_similar = (request.args.get('apply_to_similar') == 'true')
+    try:
+        next_level = int(request.args.get('next_level'))
+    except ValueError:
+        return jsonify(status='Not a number in next level.')
+    is_admin = is_administrative_region(region_id)
     region_ids = [region_id]
+    apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     if apply_to_similar:
+        if not is_admin:
+            return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
         region_ids = get_similar_regions(region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
+        if not is_admin:
+            return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
             city_population_thr = int(request.args.get('city_population_thr'))
             cluster_population_thr = int(request.args.get('cluster_population_thr'))
         except ValueError:
-            return jsonify(status='Not a number in thresholds')
+            return jsonify(status='Not a number in thresholds.')
         return divide_into_clusters_preview(
                 region_ids, next_level,
                 (city_population_thr, cluster_population_thr))
@@ -647,6 +649,7 @@ def get_subregions(region_ids, next_level):
 
 def get_subregions_one(region_id, next_level):
     osm_table = config.OSM_TABLE
+    table = config.TABLE
     cur = g.conn.cursor()
     # We use ST_SimplifyPreserveTopology, since ST_Simplify would give NULL
     # for very little regions.
@@ -656,15 +659,13 @@ def get_subregions_one(region_id, next_level):
                osm_id
         FROM {osm_table}
         WHERE ST_Contains(
-                (SELECT way FROM {osm_table} WHERE osm_id = %s), way
+                (SELECT geom FROM {table} WHERE id = %s), way
               )
             AND admin_level = %s
         """, (region_id, next_level)
     )
     subregions = []
     for rec in cur:
-        #if rec[1] is None:
-        #    continue
         feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]),
                     'properties': { 'name': rec[0] } }
         subregions.append(feature)
@@ -727,20 +728,26 @@ def divide():
     if config.READONLY:
         abort(405)
     region_id = int(request.args.get('id'))
-    if not is_administrative_region(region_id):
-        return jsonify(status=NON_ADMINISTRATIVE_REGION_ERROR)
-    next_level = int(request.args.get('next_level'))
+    try:
+        next_level = int(request.args.get('next_level'))
+    except ValueError:
+        return jsonify(status='Not a number in next level.')
+    is_admin = is_administrative_region(region_id)
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     region_ids = [region_id]
     if apply_to_similar:
+        if not is_admin:
+            return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
         region_ids = get_similar_regions(region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
+        if not is_admin:
+            return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
             city_population_thr = int(request.args.get('city_population_thr'))
             cluster_population_thr = int(request.args.get('cluster_population_thr'))
         except ValueError:
-            return jsonify(status='Not a number in thresholds')
+            return jsonify(status='Not a number in thresholds.')
         return divide_into_clusters(
                 region_ids, next_level,
                 (city_population_thr, cluster_population_thr))
@@ -752,17 +759,32 @@ def divide_into_subregions(region_ids, next_level):
     osm_table = config.OSM_TABLE
     cur = g.conn.cursor()
     for region_id in region_ids:
-        # TODO: rewrite SELECT into join rather than subquery to enable gist index
-        cur.execute(f"""
-            INSERT INTO {table} (id, geom, name, parent_id, modified, count_k)
-            SELECT osm_id, way, name, %s, now(), -1
-            FROM {osm_table}
-            WHERE ST_Contains(
-                    (SELECT way FROM {osm_table} WHERE osm_id = %s), way
-                )
-                AND admin_level = {next_level}
-            """, (region_id, region_id,)
-        )
+        is_admin = is_administrative_region(region_id)
+        if is_admin:
+            # TODO: rewrite SELECT into join rather than subquery to enable gist index
+            cur.execute(f"""
+                INSERT INTO {table} (id, geom, name, parent_id, modified, count_k)
+                SELECT osm_id, way, name, %s, now(), -1
+                FROM {osm_table}
+                WHERE ST_Contains(
+                        (SELECT geom FROM {table} WHERE id = %s), way
+                    )
+                    AND admin_level = {next_level}
+                """, (region_id, region_id,)
+            )
+        else:
+            cur.execute(f"""
+                INSERT INTO {table} (id, geom, name, parent_id, modified, count_k)
+                SELECT osm_id, way, name, (SELECT parent_id FROM {table} WHERE id = %s), now(), -1
+                FROM {osm_table}
+                WHERE ST_Contains(
+                        (SELECT geom FROM {table} WHERE id = %s), way
+                    )
+                    AND admin_level = {next_level}
+                """, (region_id, region_id,)
+            )
+            cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
+
     g.conn.commit()
     return jsonify(status='ok')
 

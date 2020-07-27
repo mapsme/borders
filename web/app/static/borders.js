@@ -922,11 +922,21 @@ function bDivide() {
 	$('#b_divide').hide();
 	$('#divide').show();
 	// pre-fill 'like' and 'where' fields
-	$('#region_to_divide').text(borders[selectedId].name + ' (' +
-                     selectedId + ')');
-    var next_admin_level = borders[selectedId].admin_level ?
-                           borders[selectedId].admin_level + 1 : null;
+	$('#region_to_divide').text(borders[divSelectedId].name + ' (' +
+                     divSelectedId + ')');
+    var next_admin_level = borders[divSelectedId].admin_level ?
+                           borders[divSelectedId].admin_level + 1 : null;
 	$('#next_level').val(next_admin_level);
+    if (next_admin_level === null) {
+        // Divided region is not an administrative unit.
+        // Do not allow 'auto_divide' and 'apply_to_similar' options.
+        $('#auto_divide').prop({'checked': false, 'disabled': true});
+        $('#apply_to_similar').prop({'checked': false, 'disabled': true});
+    }
+    else {
+        $('#auto_divide').prop('disabled', false);
+        $('#apply_to_similar').prop('disabled', false);
+    }
 }
 
 function clearDivideLayers() {
