@@ -3,7 +3,7 @@ CONNECTION = 'dbname=borders user=borders password=borders host=dbhost port=5432
 # passed to flask.Debug
 DEBUG = True
 # if the main table is read-only
-READONLY = False 
+READONLY = False
 # main table name
 TABLE = 'borders'
 # from where OSM borders are imported
@@ -25,4 +25,6 @@ JOSM_FORCE_MULTI = True
 # alert instead of json on import error
 IMPORT_ERROR_ALERT = False
 # file to which daemon writes the name of currently processed region
-DAEMON_STATUS_PATH = '/var/tmp/borders-daemon-status.txt'
+DAEMON_STATUS_PATH = '/tmp/borders-daemon-status.txt'
+DAEMON_PID_PATH = '/tmp/borders-daemon.pid'
+DAEMON_LOG_PATH = '/var/log/borders-daemon.log'

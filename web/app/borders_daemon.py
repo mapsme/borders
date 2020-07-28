@@ -25,7 +25,7 @@ CHECK_BORDERS_INTERVAL = 10
 no_count_queries = [
     f"""
         SELECT id, name
-        FROM 
+        FROM
           ( SELECT id, name,
             ST_Area(geography(geom))/1000000.0 area,
             ST_Area(geography(ST_Envelope(geom)))/1000000.0 env_area
@@ -45,7 +45,7 @@ class App():
         self.stdin_path = '/dev/null'
         self.stdout_path = '/dev/tty'
         self.stderr_path = '/dev/tty'
-        self.pidfile_path = '/var/log/borders-daemon.pid'
+        self.pidfile_path = config.DAEMON_PID_PATH
         self.pidfile_timeout = 5
         self.conn = None
 
@@ -65,11 +65,10 @@ class App():
                    self.conn.close()
                 except:
                    pass
-                time.sleep(CONNECT_WAIT_INTERVAL)  
-        
+                time.sleep(CONNECT_WAIT_INTERVAL)
 
     def process(self, region_id, region_name):
-        msg = f'Processing {region_name} ({region_id})' 
+        msg = f'Processing {region_name} ({region_id})'
         logger.info(msg)
         try:
             f = open(config.DAEMON_STATUS_PATH, 'w')
@@ -82,7 +81,7 @@ class App():
         with self.get_connection().cursor() as cur:
             cur.execute(f"""
                 UPDATE {table}
-                SET count_k = n.count 
+                SET count_k = n.count
                 FROM (SELECT coalesce(sum(t.count), 0) AS count
                       FROM {table} b, tiles t
                       WHERE b.id = %s AND ST_Intersects(b.geom, t.tile)
@@ -121,7 +120,7 @@ def init_logger():
     logger = logging.getLogger("borders-daemon")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    handler = logging.FileHandler("/var/log/borders-daemon.log")
+    handler = logging.FileHandler(config.DAEMON_LOG_PATH)
     #handler = logging.StreamHandler()
     handler.setFormatter(formatter)
     logger.addHandler(handler)
