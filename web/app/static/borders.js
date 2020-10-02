@@ -3,11 +3,14 @@ var STYLE_SELECTED = { stroke: true, color: '#ff3', weight: 3, fill: true, fillO
 var FILL_TOO_SMALL = '#0f0';
 var FILL_TOO_BIG = '#800';
 var FILL_ZERO = 'black';
-var OLD_BORDERS_NAME; // filled in checkHasOSM()
-var IMPORT_ENABLED = true;
 
-var map, borders = {}, bordersLayer, selectedId, editing = false, readonly = false;
-var size_good = 50, size_bad = 70;
+var map, borders = {}, bordersLayer, selectedId, editing = false;
+var config = {  // server config
+    READONLY: false,
+    MWM_SIZE_THR: 70,
+    OLD_BORDERS_NAME: undefined  // may be filled in getServerConfiguration()
+};
+var size_good, size_bad;
 var maxRank = 1;
 var tooSmallLayer = null;
 var oldBordersLayer = null;
@@ -68,17 +71,17 @@ function init() {
         else
             $('#population_thresholds').hide();
     });
-	checkHasOSM();
+	getServerConfiguration();
 	filterSelect(true);
 }
 
-function checkHasOSM() {
-	$.ajax(getServer('tables'), {
+function getServerConfiguration() {
+	$.ajax(getServer('config'), {
 		success: function(res) {
 			if( res.osm )
 				$('#osm_actions').css('display', 'block');
 			if( res.tables && res.tables.length > 0 ) {
-				OLD_BORDERS_NAME = res.tables[0];
+				config.OLD_BORDERS_NAME = res.tables[0];
 				$('#old_action').css('display', 'block');
 				$('#josm_old').css('display', 'inline');
 			}
@@ -91,7 +94,7 @@ function checkHasOSM() {
 				$('#action_buttons').css('display', 'none');
 				$('#import_link').css('display', 'none');
 				$('#backups').css('display', 'none');
-				readonly = true;
+				config.READONLY = true;
 			}
 			if( !res.readonly && IMPORT_ENABLED ) {
 				$('#import_link').css('display', 'none');
@@ -100,6 +103,11 @@ function checkHasOSM() {
 				var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
 			//	$('#filefm').after(iframe);
 			}
+            size_bad = config.MWM_SIZE_THR = Math.round(parseInt(res.mwm_size_thr)/1024);
+            size_good = Math.round(size_bad * 0.7 / 10) * 10;
+            $('#r_green').val(size_good);
+	        $('#r_red').val(size_bad);
+	        $('#mwm_size_thr').val(config.MWM_SIZE_THR);
 		}
 	});
 }
@@ -148,11 +156,11 @@ function updateBorders() {
 		crossingLayer.clearLayers();
 	}
 
-	if( oldBordersLayer != null && OLD_BORDERS_NAME ) {
+	if( oldBordersLayer != null && config.OLD_BORDERS_NAME ) {
 		oldBordersLayer.clearLayers();
 		$.ajax(getServer('bbox'), {
 			data: {
-				'table': OLD_BORDERS_NAME,
+				'table': config.OLD_BORDERS_NAME,
 				'simplify': simplified,
 				'xmin': b.getWest(),
 				'xmax': b.getEast(),
@@ -302,6 +310,7 @@ function selectLayer(e) {
         $('#b_al').text(props['admin_level'] ? '('+props['admin_level']+')' : '');
 		$('#b_parent_name').text(props['parent_name']);
 		$('#b_size').text(Math.round(props['count_k'] * BYTES_FOR_NODE / 1024 / 1024) + ' MB');
+		$('#pa_size').text(Math.round(props['mwm_size_est']/1024) + ' MB');
 		//$('#b_nodes').text(borders[selectedId].layer.getLatLngs()[0].length);
 		$('#b_nodes').text(props['nodes']);
 		$('#b_date').text(props['modified']);
@@ -317,7 +326,7 @@ function selectLayer(e) {
 
 function filterSelect(noRefresh) {
 	var value = $('#f_type').val();
-	$('#f_size').css('display', value == 'size' ? 'block' : 'none');
+	$('#f_size').css('display', value.endsWith('size') ? 'block' : 'none');
 	$('#f_chars').css('display', value == 'chars' ? 'block' : 'none');
 	$('#f_comments').css('display', value == 'comments' ? 'block' : 'none');
 	$('#f_topo').css('display', value == 'topo' ? 'block' : 'none');
@@ -336,29 +345,47 @@ var colors = ['red', 'orange', 'yellow', 'lime', 'green', 'olive', 'cyan', 'dark
               'blue', 'navy', 'magenta', 'purple', 'deeppink', 'brown'] //'black';
 var alphabet = 'abcdefghijklmnopqrstuvwxyz';
 
+function getStringHash(str) {
+    var hash = 0, i, chr;
+    /*
+    for (i = 0; i < str.length; i++) {
+        chr   = str.charCodeAt(i);
+        hash  = ((hash << 5) - hash) + chr;
+        hash |= 0; // Convert to 32bit integer
+    }
+    */
+    hash = str.charCodeAt(0) + str.charCodeAt(1);
+    return hash;
+}
+
 function getCountryColor(props) {
     var country_name = props.country_name;
     if (!country_name)
         return 'black';
-	var firstLetter = country_name[0].toLowerCase();
-    var index = alphabet.indexOf(firstLetter);
-    if (index === -1)
-        return 'black';
-    var indexInColors = index % colors.length;
+	var hash = getStringHash(country_name);
+    var indexInColors = Math.abs(hash) % colors.length;
     return colors[indexInColors];
 }
 
 function getColor(props) {
 	var color = STYLE_BORDER.color;
 	var fType = $('#f_type').val();
-	if( fType == 'size' ) {
+	if( fType == 'nodes_size' ) {
 		if( props['count_k'] <= 0 )
 			color = FILL_ZERO;
 		else if( props['count_k'] * BYTES_FOR_NODE < size_good * 1024 * 1024 )
 			color = FILL_TOO_SMALL;
 		else if( props['count_k'] * BYTES_FOR_NODE > size_bad * 1024 * 1024 )
 			color = FILL_TOO_BIG;
-	} else if( fType == 'topo' ) {
+	} else if( fType == 'predict_size' ) {
+	    if( props['mwm_size_est'] <= 0 )
+	        color = FILL_ZERO;
+	    else if( props['mwm_size_est'] < size_good * 1024 )
+			color = FILL_TOO_SMALL;
+		else if( props['mwm_size_est'] > size_bad * 1024 )
+			color = FILL_TOO_BIG;
+	}
+	else if( fType == 'topo' ) {
 		var rings = countRings([0, 0], props.layer);
 		if( rings[1] > 0 )
 			color = FILL_TOO_BIG;
@@ -471,7 +498,7 @@ function bJOSM() {
 function bJosmOld() {
 	var b = map.getBounds();
 	importInJOSM('josm', {
-		'table': OLD_BORDERS_NAME,
+		'table': config.OLD_BORDERS_NAME,
 		'xmin': b.getWest(),
 		'xmax': b.getEast(),
 		'ymin': b.getSouth(),
@@ -508,7 +535,7 @@ function finishRename() {
 }
 
 function bToggleRename() {
-	if( !selectedId || !(selectedId in borders) || readonly )
+	if( !selectedId || !(selectedId in borders) || config.READONLY )
 		return;
     var rename_el = $('#rename');
     if (rename_el.is(':hidden')) {
@@ -952,11 +979,8 @@ function clearDivideLayers() {
 
 function bDividePreview() {
     var auto_divide = $('#auto_divide').prop('checked');
-    if (auto_divide && (
-                !$('#city_population_thr').val() ||
-                !$('#cluster_population_thr').val())
-    ) {
-        alert('Fill population thresholds');
+    if (auto_divide && !$('#mwm_size_thr').val()) {
+        alert('Fill mmw size threshold');
         return;
     }
     clearDivideLayers();
@@ -970,8 +994,7 @@ function bDividePreview() {
         'apply_to_similar': apply_to_similar
 	};
     if (auto_divide) {
-        params['city_population_thr'] = $('#city_population_thr').val();
-        params['cluster_population_thr'] = $('#cluster_population_thr').val();
+        params['mwm_size_thr'] = parseInt($('#mwm_size_thr').val()) * 1024;
     }
 	$.ajax(getServer('divpreview'), {
 		data: params,
@@ -1025,8 +1048,7 @@ function bDivideDo() {
         'apply_to_similar': apply_to_similar
 	};
     if (auto_divide) {
-        params['city_population_thr'] = $('#city_population_thr').val();
-        params['cluster_population_thr'] = $('#cluster_population_thr').val();
+        params['mwm_size_thr'] = parseInt($('#mwm_size_thr').val()) * 1024;
     }
 	$.ajax(getServer('divide'), {
 		data: params,

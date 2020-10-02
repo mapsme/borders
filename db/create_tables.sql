@@ -14,7 +14,7 @@ CREATE TABLE borders (
 	count_k INTEGER,
 	modified TIMESTAMP NOT NULL,
 	cmnt VARCHAR(500),
-	mwm_size_est double precision
+	mwm_size_est REAL
 );
 CREATE INDEX borders_geom_gits_idx ON borders USING gist (geom);
 CREATE INDEX borders_parent_id_idx ON borders (parent_id);
@@ -29,15 +29,15 @@ CREATE TABLE borders_backup (
 	count_k INTEGER,
 	modified TIMESTAMP NOT NULL,
 	cmnt VARCHAR(500),
-	mwm_size_est double precision,
+	mwm_size_est REAL,
 	PRIMARY KEY (backup, id)
 );
 
 CREATE TABLE splitting (
     osm_border_id BIGINT NOT NULL REFERENCES osm_borders(osm_id), -- reference to parent osm region
     subregion_ids BIGINT[] NOT NULL,
-    mwm_size_est double precision NOT NULL,
-    mwm_size_thr double precision NOT NULL,
+    mwm_size_est REAL NOT NULL,
+    mwm_size_thr INTEGER NOT NULL, -- mwm size threshold in Kb, 4-bytes INTEGER is enough
     geom geometry NOT NULL
 );
 CREATE INDEX splitting_idx ON splitting (osm_border_id, mwm_size_thr);

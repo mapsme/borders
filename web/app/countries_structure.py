@@ -2,6 +2,8 @@ import itertools
 
 import config
 
+from subregions import get_subregions_info
+
 
 table = config.TABLE
 osm_table = config.OSM_TABLE
@@ -260,43 +262,32 @@ def _clear_borders(conn):
     conn.commit()
 
 
-def _find_subregions(conn, osm_ids, next_level, parents, names):
+def _find_subregions(conn, osm_ids, next_level, regions):
     """Return subregions of level 'next_level' for regions with osm_ids."""
-    cursor = conn.cursor()
-    parent_osm_ids = ','.join(str(x) for x in osm_ids)
-    cursor.execute(f"""
-        SELECT b.osm_id, b.name, subb.osm_id, subb.name
-        FROM {osm_table} b, {osm_table} subb
-        WHERE subb.admin_level=%s
-            AND b.osm_id IN ({parent_osm_ids})
-            AND ST_Contains(b.way, subb.way)
-        """,
-        (next_level,)
-    )
-
-    # parent_osm_id => [(osm_id, name), (osm_id, name), ...]
     subregion_ids = []
-
-    for rec in cursor:
-        parent_osm_id = rec[0]
-        osm_id = rec[2]
-        parents[osm_id] = parent_osm_id
-        name = rec[3]
-        names[osm_id] = name
-        subregion_ids.append(osm_id)
+    for osm_id in osm_ids:
+        more_subregions = get_subregions_info(conn, osm_id, table,
+                                              next_level, need_cities=False)
+        for subregion_id, subregion_data in more_subregions.items():
+            region_data = regions.setdefault(subregion_id, {})
+            region_data['name'] = subregion_data['name']
+            region_data['mwm_size_est'] = subregion_data['mwm_size_est']
+            region_data['parent_id'] = osm_id
+            subregion_ids.append(subregion_id)
     return subregion_ids
 
 
-def _create_regions(conn, osm_ids, parents, names):
+def _create_regions(conn, osm_ids, regions):
     if not osm_ids:
         return
     osm_ids = list(osm_ids)  # to ensure order
     cursor = conn.cursor()
     sql_values = ','.join(
             f'({osm_id},'
-             '%s,'
+            '%s,'
+            f"{regions[osm_id].get('parent_id', 'NULL')},"
+            f"{regions[osm_id].get('mwm_size_est', 'NULL')},"
             f'(SELECT way FROM {osm_table} WHERE osm_id={osm_id}),'
-            f'{parents[osm_id] or "NULL"},'
             'now())'
             for osm_id in osm_ids
     )
@@ -304,21 +295,23 @@ def _create_regions(conn, osm_ids, parents, names):
     #print(f"names={tuple(names[osm_id] for osm_id in osm_ids)}")
     #print(f"all parents={parents}")
     cursor.execute(f"""
-        INSERT INTO {table} (id, name, geom, parent_id, modified)
+        INSERT INTO {table} (id, name, parent_id, mwm_size_est, geom, modified)
         VALUES {sql_values}
-        """, tuple(names[osm_id] for osm_id in osm_ids)
+        """, tuple(regions[osm_id]['name'] for osm_id in osm_ids)
     )
 
 
 def _make_country_structure(conn, country_osm_id):
-    names = {}  # osm_id => osm name
-    parents = {}  # osm_id => parent_osm_id
+    regions = {}  # osm_id: { 'name': name,
+                  #           'mwm_size_est': size,
+                  #           'parent_id': parent_id }
 
     country_name = get_osm_border_name_by_osm_id(conn, country_osm_id)
-    names[country_osm_id] = country_name
-    parents[country_osm_id] = None
+    country_data = regions.setdefault(country_osm_id, {})
+    country_data['name'] = country_name
+    # TODO: country_data['mwm_size_est'] = ...
 
-    _create_regions(conn, [country_osm_id], parents, names)
+    _create_regions(conn, [country_osm_id], regions)
 
     if country_initial_levels.get(country_name):
         admin_levels = country_initial_levels[country_name]
@@ -332,18 +325,19 @@ def _make_country_structure(conn, country_osm_id):
                         f"AL={admin_level}, prev-AL={prev_level}"
                 )
             subregion_ids = _find_subregions(conn, prev_region_ids,
-                                             admin_level, parents, names)
-            _create_regions(conn, subregion_ids, parents, names)
+                                             admin_level, regions)
+            _create_regions(conn, subregion_ids, regions)
             prev_region_ids = subregion_ids
 
 
 def create_countries_initial_structure(conn):
     _clear_borders(conn)
     cursor = conn.cursor()
+    # TODO: process overlapping countries, like Ukraine and Russia with common Crimea
     cursor.execute(f"""
         SELECT osm_id, name
         FROM {osm_table}
-        WHERE admin_level = 2
+        WHERE admin_level = 2 and name != 'Ukraine'
         """
         #  and name in --('Germany', 'Luxembourg', 'Austria')
         #    ({','.join(f"'{c}'" for c in country_initial_levels.keys())})

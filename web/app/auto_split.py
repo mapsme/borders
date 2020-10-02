@@ -6,20 +6,21 @@ from collections import defaultdict
 
 from config import (
         AUTOSPLIT_TABLE as autosplit_table,
-        TABLE as table,
-        OSM_TABLE as osm_table
+        OSM_TABLE as osm_table,
+        MWM_SIZE_THRESHOLD,
 )
+from subregions import get_subregions_info
 
 
 class DisjointClusterUnion:
     """Disjoint set union implementation for administrative subregions."""
 
-    def __init__(self, region_id, subregions, thresholds):
+    def __init__(self, region_id, subregions, mwm_size_thr=None):
         self.region_id = region_id
         self.subregions = subregions
-        self.city_population_thr, self.cluster_population_thr = thresholds
+        self.mwm_size_thr = mwm_size_thr or MWM_SIZE_THRESHOLD
         self.representatives = {sub_id: sub_id for sub_id in subregions}
-        # a cluster is one or more subregions with common borders
+        # A cluster is one or more subregions with common borders
         self.clusters = {}  # representative => cluster object
 
         # At the beginning, each subregion forms a cluster.
@@ -28,27 +29,20 @@ class DisjointClusterUnion:
             self.clusters[subregion_id] = {
                 'representative': subregion_id,
                 'subregion_ids': [subregion_id],
-                'population': data['population'],
-                'big_cities_cnt': sum(1 for c in data['cities'] if self.is_city_big(c)),
+                'mwm_size_est': data['mwm_size_est'],
                 'finished': False,  # True if the cluster cannot be merged with another
             }
-
-
-    def is_city_big(self, city):
-        return city['population'] >= self.city_population_thr 
 
     def get_smallest_cluster(self):
         """Find minimal cluster without big cities."""
         smallest_cluster_id = min(
             filter(
-                lambda cluster_id: (
-                    not self.clusters[cluster_id]['finished'] and
-                    self.clusters[cluster_id]['big_cities_cnt'] == 0)
-                ,
+                lambda cluster_id:
+                    not self.clusters[cluster_id]['finished'],
                 self.clusters.keys()
             ),
             default=None,
-            key=lambda cluster_id: self.clusters[cluster_id]['population']
+            key=lambda cluster_id: self.clusters[cluster_id]['mwm_size_est']
         )
         return smallest_cluster_id
 
@@ -63,9 +57,9 @@ class DisjointClusterUnion:
             self.representatives[subregion_id] = representative
             return representative
 
-    def get_cluster_population(self, subregion_id):
+    def get_cluster_mwm_size_est(self, subregion_id):
         cluster_id = self.find_cluster(subregion_id)
-        return self.clusters[cluster_id]['population']
+        return self.clusters[cluster_id]['mwm_size_est']
 
     def get_cluster_count(self):
         return len(self.clusters)
@@ -77,8 +71,7 @@ class DisjointClusterUnion:
         r_cluster = self.clusters[retained_cluster_id]
         d_cluster = self.clusters[dropped_cluster_id]
         r_cluster['subregion_ids'].extend(d_cluster['subregion_ids'])
-        r_cluster['population'] += d_cluster['population']
-        r_cluster['big_cities_cnt'] += d_cluster['big_cities_cnt']
+        r_cluster['mwm_size_est'] += d_cluster['mwm_size_est']
         del self.clusters[dropped_cluster_id]
         self.representatives[dropped_cluster_id] = retained_cluster_id
         return retained_cluster_id
@@ -95,52 +88,13 @@ class DisjointClusterUnion:
         return subregion_ids
 
 
-def enrich_with_population_and_cities(conn, subregions):
-    cursor = conn.cursor()
-    ids = ','.join(str(x) for x in subregions.keys())
-    cursor.execute(f"""
-        SELECT b.osm_id, c.name, c.population
-        FROM {osm_table} b, osm_cities c
-        WHERE b.osm_id IN ({ids}) AND ST_CONTAINS(b.way, c.center)
-        """
-    )
-    for rec in cursor:
-        sub_id = int(rec[0])
-        subregions[sub_id]['cities'].append({
-            'name': rec[1],
-            'population': int(rec[2])
-        })
-        subregions[sub_id]['population'] += int(rec[2])
-
-
-def find_subregions(conn, region_id, next_level):
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT subreg.osm_id, subreg.name
-        FROM {osm_table} reg, {osm_table} subreg
-        WHERE reg.osm_id = %s AND subreg.admin_level = %s AND
-              ST_Contains(reg.way, subreg.way)
-        """,
-        (region_id, next_level)
-    )
-    subregions = {
-        int(rec[0]):
-        {
-            'osm_id': int(rec[0]),
-            'name': rec[1],
-            'population': 0,
-            'cities': []
-        }
-        for rec in cursor
-    }
-    if subregions:
-        enrich_with_population_and_cities(conn, subregions)
-    return subregions
-
-
-def get_best_cluster_to_join_with(small_cluster_id, dcu: DisjointClusterUnion, common_border_matrix):
+def get_best_cluster_to_join_with(small_cluster_id,
+                                  dcu: DisjointClusterUnion,
+                                  common_border_matrix):
     if small_cluster_id not in common_border_matrix:
-        return None  # this may be if a subregion is isolated, like Bezirk Lienz inside Tyrol, Austria
+        # This may be if a subregion is isolated,
+        # like Bezirk Lienz inside Tyrol, Austria
+        return None
     common_borders = defaultdict(lambda: 0.0)  # cluster representative => common border length
     subregion_ids = dcu.get_cluster_subregion_ids(small_cluster_id)
     for subregion_id in subregion_ids:
@@ -148,29 +102,26 @@ def get_best_cluster_to_join_with(small_cluster_id, dcu: DisjointClusterUnion, c
             other_cluster_id = dcu.find_cluster(other_subregion_id)
             if other_cluster_id != small_cluster_id:
                 common_borders[other_cluster_id] += length
-    #print(f"common_borders={json.dumps(common_borders)} of len {len(common_borders)}")
-    #common_borders = {k:v for k,v in common_borders.items() if v > 0.0}
     if not common_borders:
         return None
     total_common_border_length = sum(common_borders.values())
-    total_adjacent_population = sum(dcu.get_cluster_population(x) for x in common_borders)
+    total_adjacent_mwm_size_est = sum(dcu.get_cluster_mwm_size_est(x) for x in common_borders)
     choice_criterion = (
         (
           lambda cluster_id: (
-            common_borders[cluster_id]/total_common_border_length + 
-            -dcu.get_cluster_population(cluster_id)/total_adjacent_population
+            common_borders[cluster_id]/total_common_border_length +
+            -dcu.get_cluster_mwm_size_est(cluster_id)/total_adjacent_mwm_size_est
           )
-        ) if total_adjacent_population else
+        ) if total_adjacent_mwm_size_est else
         lambda cluster_id: (
             common_borders[cluster_id]/total_common_border_length
         )
     )
-    small_cluster_population = dcu.get_cluster_population(small_cluster_id)
     best_cluster_id = max(
         filter(
             lambda cluster_id: (
-                small_cluster_population + dcu.get_cluster_population(cluster_id)
-                    <= dcu.cluster_population_thr
+                dcu.clusters[small_cluster_id]['mwm_size_est'] +
+                dcu.clusters[cluster_id]['mwm_size_est'] <= dcu.mwm_size_thr
             ),
             common_borders.keys()
         ),
@@ -207,39 +158,31 @@ def calculate_common_border_matrix(conn, subregion_ids):
 
 
 def find_golden_splitting(conn, border_id, next_level,
-                          country_region_name, thresholds):
-    subregions = find_subregions(conn, border_id, next_level)
+                          country_region_name, mwm_size_thr):
+    subregions = get_subregions_info(conn, border_id, osm_table,
+                                     next_level, need_cities=True)
     if not subregions:
-        print(f"No subregions for {border_id} {country_region_name}")
         return
 
-    dcu = DisjointClusterUnion(border_id, subregions, thresholds)
+    dcu = DisjointClusterUnion(border_id, subregions, mwm_size_thr)
     #save_splitting_to_file(dcu, f'all_{country_region_name}')
     all_subregion_ids = dcu.get_all_subregion_ids()
     common_border_matrix = calculate_common_border_matrix(conn, all_subregion_ids)
 
     i = 0
     while True:
-        with open(f"clusters-{i:02d}.json", 'w') as f:
-            json.dump(dcu.clusters, f, ensure_ascii=False, indent=2)
         if dcu.get_cluster_count() == 1:
             return dcu
         i += 1
-        #print(f"i = {i}")
         smallest_cluster_id = dcu.get_smallest_cluster()
         if not smallest_cluster_id:
-            return dcu # TODO: return target splitting
-        #print(f"smallest cluster = {json.dumps(dcu.clusters[smallest_cluster_id])}")
+            return dcu
         best_cluster_id = get_best_cluster_to_join_with(smallest_cluster_id, dcu, common_border_matrix)
-        if not best_cluster_id: # !!! a case for South West England and popul 500000
-            dcu.mark_cluster_finished(smallest_cluster_id)     
+        if not best_cluster_id:
+            dcu.mark_cluster_finished(smallest_cluster_id)
             continue
         assert (smallest_cluster_id != best_cluster_id), f"{smallest_cluster_id}"
-        #print(f"best cluster = {json.dumps(dcu.clusters[best_cluster_id])}")
-        new_cluster_id = dcu.union(smallest_cluster_id, best_cluster_id)
-        #print(f"{json.dumps(dcu.clusters[new_cluster_id])}")
-        #print()
-        #import sys; sys.exit()
+        dcu.union(smallest_cluster_id, best_cluster_id)
     return dcu
 
 
@@ -279,6 +222,9 @@ def write_polygons_to_poly(file, polygons, name_prefix):
 
 
 def save_splitting_to_file(conn, dcu: DisjointClusterUnion, filename_prefix=None):
+    """May be used for debugging"""
+    GENERATE_ALL_POLY=False
+    FOLDER='split_results'
     with open(f"{FOLDER}/{filename_prefix}.poly", 'w') as poly_file:
         poly_file.write(f"{filename_prefix}\n")
         for cluster_id, data in dcu.clusters.items():
@@ -297,7 +243,7 @@ def save_splitting_to_file(conn, dcu: DisjointClusterUnion, filename_prefix=None
         poly_file.write('END\n')
     with open(f"{FOLDER}/{filename_prefix}-splitting.json", 'w') as f:
         json.dump(dcu.clusters, f, ensure_ascii=False, indent=2)
-    
+
 
 def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
     cursor = conn.cursor()
@@ -305,8 +251,7 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
     cursor.execute(f"""
         DELETE FROM {autosplit_table}
         WHERE osm_border_id = {dcu.region_id}
-          AND city_population_thr = {dcu.city_population_thr}
-          AND cluster_population_thr = {dcu.cluster_population_thr}
+          AND mwm_size_thr = {dcu.mwm_size_thr}
         """)
     for cluster_id, data in dcu.clusters.items():
         subregion_ids = data['subregion_ids']
@@ -314,20 +259,19 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
         cluster_geometry_sql = get_union_sql(subregion_ids)
         cursor.execute(f"""
           INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
-                                         city_population_thr, cluster_population_thr)
+                                         mwm_size_thr, mwm_size_est)
           VALUES (
             {dcu.region_id},
             '{{{','.join(str(x) for x in subregion_ids)}}}',
             ({cluster_geometry_sql}),
-            {dcu.city_population_thr},
-            {dcu.cluster_population_thr}
+            {dcu.mwm_size_thr},
+            {data['mwm_size_est']}
           )
-        """) 
+        """)
     conn.commit()
-    
+
 
 def get_region_and_country_names(conn, region_id):
-    #if region_id != -1574364: return
     cursor = conn.cursor()
     try:
      cursor.execute(
@@ -355,18 +299,15 @@ def get_region_and_country_names(conn, region_id):
         print(f"Many countries for region '{region_name}' id={region_id}")
     return region_name, country_name
 
-DEFAULT_CITY_POPULATION_THRESHOLD = 500000
-DEFAULT_CLUSTER_POPULATION_THR = 500000
 
 def split_region(conn, region_id, next_level,
-                 thresholds=(DEFAULT_CITY_POPULATION_THRESHOLD,
-                             DEFAULT_CLUSTER_POPULATION_THR),
+                 mwm_size_thr,
                  save_to_files=False):
     region_name, country_name = get_region_and_country_names(conn, region_id)
     region_name = region_name.replace('/', '|')
     country_region_name = f"{country_name}_{region_name}" if country_name else region_name
     dcu = find_golden_splitting(conn, region_id, next_level,
-                                country_region_name, thresholds)
+                                country_region_name, mwm_size_thr)
     if dcu is None:
         return
 
@@ -378,30 +319,6 @@ def save_splitting(dcu: DisjointClusterUnion, conn,
     save_splitting_to_db(conn, dcu)
     if save_to_files:
         print(f"Saving {country_region_name}")
-        filename_prefix = f"{country_region_name}-{dcu.city_population_thrR}"
+        filename_prefix = f"{country_region_name}-{dcu.city_population_thr}"
         save_splitting_to_file(conn, dcu, filename_prefix)
-
-
-GENERATE_ALL_POLY=False
-FOLDER='split_results'
-#CITY_POPULATION_THR = 500000
-#CLUSTER_POPULATION_THR = 500000
-
-if __name__ == '__main__':
-    conn = psycopg2.connect("dbname=az_gis3")
-
-    PREFIX = "UBavaria"
-    CITY_POPULATION_THR = 500000
-    CLUSTER_POPULATION_THR = 500000
-
-    region_id = -162050 # -165475 # California  ## -162050  # Florida
-    region_id = -2145274 # Upper Bavaria
-    #region_id = -151339  # South West England
-    #region_id = -58446   # Scotland
-    dcu = find_golden_splitting(region_id)
-    make_polys(dcu.clusters)
-    with open(f"{PREFIX}_{CITY_POPULATION_THR}_splitting{region_id}-poplen.json", 'w') as f:
-        json.dump(dcu.clusters, f, ensure_ascii=False, indent=2)
-
-
 

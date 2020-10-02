@@ -25,6 +25,7 @@ from countries_structure import (
     create_countries_initial_structure,
     get_osm_border_name_by_osm_id,
 )
+from subregions import get_subregions_info
 
 try:
     from lxml import etree
@@ -78,7 +79,8 @@ def fetch_borders(**kwargs):
     query = f"""
         SELECT name, geometry, nodes, modified, disabled, count_k, cmnt,
                (CASE WHEN area = 'NaN' THEN 0 ELSE area END) AS area,
-               id, admin_level, parent_id, parent_name
+               id, admin_level, parent_id, parent_name,
+               mwm_size_est
         FROM (
             SELECT name,
                ST_AsGeoJSON({geom}, 7) as geometry,
@@ -95,7 +97,8 @@ def fetch_borders(**kwargs):
                parent_id,
                ( SELECT name FROM {table}
                  WHERE id = t.parent_id
-               ) AS parent_name
+               ) AS parent_name,
+               mwm_size_est
             FROM {table} t
             WHERE ({where_clause}) {leaves_filter}
         ) q
@@ -112,18 +115,19 @@ def fetch_borders(**kwargs):
                   'disabled': rec[4], 'count_k': rec[5],
                   'comment': rec[6],
                   'area': rec[7],
-                  'id': region_id, 'country_id': country_id,
+                  'id': region_id,
                   'admin_level': rec[9],
                   'parent_id': rec[10],
                   'parent_name': rec[11] or '',
-                  'country_name': country_name
+                  'country_id': country_id,
+                  'country_name': country_name,
+                  'mwm_size_est': rec[12]
                 }
         feature = {'type': 'Feature',
                    'geometry': json.loads(rec[1]),
                    'properties': props
                   }
         borders.append(feature)
-    #print([x['properties'] for x in borders])
     return borders
 
 def simplify_level_to_postgis_value(simplify_level):
@@ -228,8 +232,8 @@ def query_crossing():
         pass
     return jsonify(type='FeatureCollection', features=result)
 
-@app.route('/tables')
-def check_osm_table():
+@app.route('/config')
+def get_server_configuration():
     osm = False
     backup = False
     old = []
@@ -260,7 +264,9 @@ def check_osm_table():
             crossing = True
     except psycopg2.Error as e:
         pass
-    return jsonify(osm=osm, tables=old, readonly=config.READONLY, backup=backup, crossing=crossing)
+    return jsonify(osm=osm, tables=old, readonly=config.READONLY,
+                   backup=backup, crossing=crossing,
+                   mwm_size_thr=config.MWM_SIZE_THRESHOLD)
 
 @app.route('/search')
 def search():
@@ -341,9 +347,10 @@ def join_borders():
         cur.execute(f"""
                 UPDATE {table}
                 SET id = {free_id},
-                    geom = ST_Union(geom, b2.g),
+                    geom = ST_Union({table}.geom, b2.geom),
+                    mwm_size_est = {table}.mwm_size_est + b2.mwm_size_est,
                     count_k = -1
-                FROM (SELECT geom AS g FROM {table} WHERE id = %s) AS b2
+                FROM (SELECT geom, mwm_size_est FROM {table} WHERE id = %s) AS b2
                 WHERE id = %s""", (region_id2, region_id1))
         cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id2,))
     except psycopg2.Error as e:
@@ -630,24 +637,23 @@ def divide_preview():
         if not is_admin:
             return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
-            city_population_thr = int(request.args.get('city_population_thr'))
-            cluster_population_thr = int(request.args.get('cluster_population_thr'))
+            mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
             return jsonify(status='Not a number in thresholds.')
         return divide_into_clusters_preview(
                 region_ids, next_level,
-                (city_population_thr, cluster_population_thr))
+                mwm_size_thr)
     else:
         return divide_into_subregions_preview(region_ids, next_level)
 
-def get_subregions(region_ids, next_level):
+def get_subregions_for_preview(region_ids, next_level):
     subregions = list(itertools.chain.from_iterable(
-        get_subregions_one(region_id, next_level)
+        get_subregions_one_for_preview(region_id, next_level)
             for region_id in region_ids
     ))
     return subregions
 
-def get_subregions_one(region_id, next_level):
+def get_subregions_one_for_preview(region_id, next_level):
     osm_table = config.OSM_TABLE
     table = config.TABLE
     cur = g.conn.cursor()
@@ -671,28 +677,28 @@ def get_subregions_one(region_id, next_level):
         subregions.append(feature)
     return subregions
 
-def get_clusters(region_ids, next_level, thresholds):
+def get_clusters_for_preview(region_ids, next_level, thresholds):
     clusters = list(itertools.chain.from_iterable(
-        get_clusters_one(region_id, next_level, thresholds)
+        get_clusters_for_preview_one(region_id, next_level, thresholds)
             for region_id in region_ids
     ))
     return clusters
 
-def get_clusters_one(region_id, next_level, thresholds):
+def get_clusters_for_preview_one(region_id, next_level, mwm_size_thr):
     autosplit_table = config.AUTOSPLIT_TABLE
     cursor = g.conn.cursor()
     where_clause = f"""
         osm_border_id = %s
-        AND city_population_thr = %s
-        AND cluster_population_thr = %s
+        AND mwm_size_thr = %s
         """
-    splitting_sql_params = (region_id,) + thresholds
+    splitting_sql_params = (region_id, mwm_size_thr)
     cursor.execute(f"""
         SELECT 1 FROM {autosplit_table}
         WHERE {where_clause}
         """, splitting_sql_params)
     if cursor.rowcount == 0:
-        split_region(g.conn, region_id, next_level, thresholds)
+        split_region(g.conn, region_id, next_level, mwm_size_thr)
+
     cursor.execute(f"""
         SELECT subregion_ids[1], ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
         FROM {autosplit_table}
@@ -700,23 +706,24 @@ def get_clusters_one(region_id, next_level, thresholds):
         """, splitting_sql_params)
     clusters = []
     for rec in cursor:
-        cluster = { 'type': 'Feature',
-                    'geometry': json.loads(rec[1]),
-                    'properties': {'osm_id': int(rec[0])}
+        cluster = {
+            'type': 'Feature',
+            'geometry': json.loads(rec[1]),
+            'properties': {'osm_id': int(rec[0])}
         }
         clusters.append(cluster)
     return clusters
 
 def divide_into_subregions_preview(region_ids, next_level):
-    subregions = get_subregions(region_ids, next_level)
+    subregions = get_subregions_for_preview(region_ids, next_level)
     return jsonify(
         status='ok',
         subregions={'type': 'FeatureCollection', 'features': subregions}
     )
 
-def divide_into_clusters_preview(region_ids, next_level, thresholds):
-    subregions = get_subregions(region_ids, next_level)
-    clusters = get_clusters(region_ids, next_level, thresholds)
+def divide_into_clusters_preview(region_ids, next_level, mwm_size_thr):
+    subregions = get_subregions_for_preview(region_ids, next_level)
+    clusters = get_clusters_for_preview(region_ids, next_level, mwm_size_thr)
     return jsonify(
         status='ok',
         subregions={'type': 'FeatureCollection', 'features': subregions},
@@ -744,51 +751,53 @@ def divide():
         if not is_admin:
             return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
-            city_population_thr = int(request.args.get('city_population_thr'))
-            cluster_population_thr = int(request.args.get('cluster_population_thr'))
+            mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
             return jsonify(status='Not a number in thresholds.')
         return divide_into_clusters(
                 region_ids, next_level,
-                (city_population_thr, cluster_population_thr))
+                mwm_size_thr)
     else:
         return divide_into_subregions(region_ids, next_level)
 
 def divide_into_subregions(region_ids, next_level):
-    table = config.TABLE
-    osm_table = config.OSM_TABLE
-    cur = g.conn.cursor()
     for region_id in region_ids:
-        is_admin = is_administrative_region(region_id)
-        if is_admin:
-            # TODO: rewrite SELECT into join rather than subquery to enable gist index
-            cur.execute(f"""
-                INSERT INTO {table} (id, geom, name, parent_id, modified, count_k)
-                SELECT osm_id, way, name, %s, now(), -1
-                FROM {osm_table}
-                WHERE ST_Contains(
-                        (SELECT geom FROM {table} WHERE id = %s), way
-                    )
-                    AND admin_level = {next_level}
-                """, (region_id, region_id,)
-            )
-        else:
-            cur.execute(f"""
-                INSERT INTO {table} (id, geom, name, parent_id, modified, count_k)
-                SELECT osm_id, way, name, (SELECT parent_id FROM {table} WHERE id = %s), now(), -1
-                FROM {osm_table}
-                WHERE ST_Contains(
-                        (SELECT geom FROM {table} WHERE id = %s), way
-                    )
-                    AND admin_level = {next_level}
-                """, (region_id, region_id,)
-            )
-            cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
-
+        divide_into_subregions_one(region_id, next_level)
     g.conn.commit()
     return jsonify(status='ok')
 
-def divide_into_clusters(region_ids, next_level, thresholds):
+def divide_into_subregions_one(region_id, next_level):
+    table = config.TABLE
+    osm_table = config.OSM_TABLE
+    subregions = get_subregions_info(g.conn, region_id, table,
+                                     next_level, need_cities=False)
+    cursor = g.conn.cursor()
+    is_admin = is_administrative_region(region_id)
+    if is_admin:
+        for subregion_id, data in subregions.items():
+            cursor.execute(f"""
+                INSERT INTO {table}
+                    (id, geom, name, parent_id, modified, count_k, mwm_size_est)
+                SELECT osm_id, way, name, %s, now(), -1, {data['mwm_size_est']}
+                FROM {osm_table}
+                WHERE osm_id = %s
+                """, (region_id, subregion_id)
+            )
+    else:
+        for subregion_id, data in subregions.items():
+            cursor.execute(f"""
+                INSERT INTO {table}
+                    (id, geom, name, parent_id, modified, count_k, mwm_size_est)
+                SELECT osm_id, way, name,
+                       (SELECT parent_id FROM {table} WHERE id = %s),
+                       now(), -1, {data['mwm_size_est']}
+                FROM {osm_table}
+                WHERE osm_id = %s
+                """, (region_id, subregion_id)
+            )
+        cursor.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
+
+def divide_into_clusters(region_ids, next_level, mwm_size_thr):
     table = config.TABLE
     autosplit_table = config.AUTOSPLIT_TABLE
     cursor = g.conn.cursor()
@@ -799,16 +808,15 @@ def divide_into_clusters(region_ids, next_level, thresholds):
 
         where_clause = f"""
             osm_border_id = %s
-            AND city_population_thr = %s
-            AND cluster_population_thr = %s
+            AND mwm_size_thr = %s
             """
-        splitting_sql_params = (region_id,) + thresholds
+        splitting_sql_params = (region_id, mwm_size_thr)
         cursor.execute(f"""
             SELECT 1 FROM {autosplit_table}
             WHERE {where_clause}
             """, splitting_sql_params)
         if cursor.rowcount == 0:
-            split_region(g.conn, region_id, next_level, thresholds)
+            split_region(g.conn, region_id, next_level, mwm_size_thr)
 
         free_id = get_free_id()
         counter = 0
@@ -830,8 +838,8 @@ def divide_into_clusters(region_ids, next_level, thresholds):
                 subregion_id = free_id
                 name = f"{base_name}_{counter}"
             insert_cursor.execute(f"""
-                INSERT INTO {table} (id, name, parent_id, geom, modified, count_k)
-                SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1
+                INSERT INTO {table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
+                SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1, mwm_size_est
                 FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
                 """, (name, cluster_id,) + splitting_sql_params)
     g.conn.commit()

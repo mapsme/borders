@@ -1,4 +1,5 @@
 const BYTES_FOR_NODE = 8;
+const IMPORT_ENABLED = true;
 
 const SELF_URL = document.location.origin;
 
