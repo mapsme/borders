@@ -18,8 +18,6 @@ OTHER_TABLES = {
 }
 # backup table
 BACKUP = 'borders_backup'
-## table with crossing lines
-CROSSING_TABLE = 'crossing'
 # area of an island for it to be considered small
 SMALL_KM2 = 10
 # force multipolygons in JOSM output

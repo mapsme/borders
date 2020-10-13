@@ -173,99 +173,55 @@ def query_small_in_bbox():
     else:
         table = config.TABLE
     cur = g.conn.cursor()
-    cur.execute('''SELECT name, round(ST_Area(geography(ring))) as area, ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
+    cur.execute(f"""
+        SELECT name, round(ST_Area(geography(ring))) as area,
+               ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
         FROM (
             SELECT name, (ST_Dump(geom)).geom as ring
             FROM {table}
             WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
         ) g
-        WHERE ST_Area(geography(ring)) < %s;'''.format(table=table), (xmin, ymin, xmax, ymax, config.SMALL_KM2 * 1000000))
+        WHERE ST_Area(geography(ring)) < %s
+        """, (xmin, ymin, xmax, ymax, config.SMALL_KM2 * 1000000)
+    )
     result = []
     for rec in cur:
-        result.append({ 'name': rec[0], 'area': rec[1], 'lon': float(rec[2]), 'lat': float(rec[3]) })
+        result.append({ 'name': rec[0], 'area': rec[1],
+                        'lon': float(rec[2]), 'lat': float(rec[3]) })
     return jsonify(features=result)
-
-@app.route('/routing')
-def query_routing_points():
-    xmin = request.args.get('xmin')
-    xmax = request.args.get('xmax')
-    ymin = request.args.get('ymin')
-    ymax = request.args.get('ymax')
-    cur = g.conn.cursor()
-    try:
-        cur.execute('''SELECT ST_X(geom), ST_Y(geom), type
-                FROM points
-                WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)
-            );''', (xmin, ymin, xmax, ymax))
-    except psycopg2.Error as e:
-        return jsonify(features=[])
-    result = []
-    for rec in cur:
-        result.append({ 'lon': rec[0], 'lat': rec[1], 'type': rec[2] })
-    return jsonify(features=result)
-
-@app.route('/crossing')
-def query_crossing():
-    xmin = request.args.get('xmin')
-    xmax = request.args.get('xmax')
-    ymin = request.args.get('ymin')
-    ymax = request.args.get('ymax')
-    region = request.args.get('region', '').encode('utf-8')
-    points = request.args.get('points') == '1'
-    rank = request.args.get('rank') or '4'
-    cur = g.conn.cursor()
-    sql = """SELECT id, ST_AsGeoJSON({line}, 7) as geometry, region, processed FROM {table}
-        WHERE line && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s)) and processed = 0 {reg} and rank <= %s;
-        """.format(table=config.CROSSING_TABLE, reg='and region = %s' if region else '', line='line' if not points else 'ST_Centroid(line)')
-    params = [xmin, ymin, xmax, ymax]
-    if region:
-        params.append(region)
-        params.append(rank)
-    result = []
-    try:
-        cur.execute(sql, tuple(params))
-        for rec in cur:
-            props = { 'id': rec[0], 'region': rec[2], 'processed': rec[3] }
-            feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]), 'properties': props }
-            result.append(feature)
-    except psycopg2.Error as e:
-        pass
-    return jsonify(type='FeatureCollection', features=result)
 
 @app.route('/config')
 def get_server_configuration():
     osm = False
     backup = False
     old = []
-    crossing = False
     try:
         cur = g.conn.cursor()
-        cur.execute('select osm_id, ST_Area(way), admin_level, name from {} limit 2;'.format(config.OSM_TABLE))
+        cur.execute(f"""SELECT osm_id, ST_Area(way), admin_level, name
+                        FROM {config.OSM_TABLE} LIMIT 2""")
         if cur.rowcount == 2:
             osm = True
     except psycopg2.Error as e:
         pass
     try:
-        cur.execute('select backup, id, name, parent_id, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(config.BACKUP))
+        cur.execute(f"""SELECT backup, id, name, parent_id, ST_Area(geom),
+                              modified, disabled, count_k, cmnt
+                       FROM {config.BACKUP} LIMIT 2""")
         backup = True
     except psycopg2.Error as e:
         pass
     for t, tname in config.OTHER_TABLES.items():
         try:
-            cur.execute('select name, ST_Area(geom), modified, disabled, count_k, cmnt from {} limit 2;'.format(tname))
+            cur.execute(f"""SELECT name, ST_Area(geom), modified, disabled,
+                                   count_k, cmnt
+                            FROM {tname} LIMIT 2""")
             if cur.rowcount == 2:
                 old.append(t)
         except psycopg2.Error as e:
             pass
-    try:
-        cur = g.conn.cursor()
-        cur.execute('select id, ST_Length(line), region, processed from {} limit 2;'.format(config.CROSSING_TABLE))
-        if cur.rowcount == 2:
-            crossing = True
-    except psycopg2.Error as e:
-        pass
-    return jsonify(osm=osm, tables=old, readonly=config.READONLY,
-                   backup=backup, crossing=crossing,
+    return jsonify(osm=osm, tables=old,
+                   readonly=config.READONLY,
+                   backup=backup,
                    mwm_size_thr=config.MWM_SIZE_THRESHOLD)
 
 @app.route('/search')
@@ -431,7 +387,16 @@ def find_osm_borders():
     lat = request.args.get('lat')
     lon = request.args.get('lon')
     cur = g.conn.cursor()
-    cur.execute("select osm_id, name, admin_level, (case when ST_Area(geography(way)) = 'NaN' then 0 else ST_Area(geography(way))/1000000 end) as area_km from {table} where ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326)) order by admin_level desc, name asc;".format(table=config.OSM_TABLE), (lon, lat))
+    cur.execute(f"""
+        SELECT osm_id, name, admin_level,
+                (CASE
+                    WHEN ST_Area(geography(way)) = 'NaN' THEN 0
+                    ELSE ST_Area(geography(way))/1000000
+                END) AS area_km
+        FROM {config.OSM_TABLE} 
+        WHERE ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326))
+        ORDER BY admin_level DESC, name ASC
+        """, (lon, lat))
     result = []
     for rec in cur:
         b = { 'id': rec[0], 'name': rec[1], 'admin_level': rec[2], 'area': rec[3] }
@@ -483,7 +448,7 @@ def delete_border():
         abort(405)
     region_id = int(request.args.get('id'))
     cur = g.conn.cursor()
-    cur.execute('delete from {} where id = %s;'.format(config.TABLE), (region_id,))
+    cur.execute(f"DELETE FROM {config.TABLE} WHERE id = %s", (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -882,56 +847,6 @@ def draw_hull():
     cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(config.TABLE), (name,))
     g.conn.commit()
     return jsonify(status='ok')
-
-@app.route('/fixcrossing')
-def fix_crossing():
-    if config.READONLY:
-        abort(405)
-    preview = request.args.get('preview') == '1'
-    region = request.args.get('region').encode('utf-8')
-    if region is None:
-        return jsonify(status='Please specify a region')
-    ids = request.args.get('ids')
-    if ids is None or len(ids) == 0:
-        return jsonify(status='Please specify a list of line ids')
-    ids = tuple(ids.split(','))
-    cur = g.conn.cursor()
-    if preview:
-        cur.execute("""
-        WITH lines as (SELECT ST_Buffer(ST_Collect(line), 0.002, 1) as g FROM {cross} WHERE id IN %s)
-        SELECT ST_AsGeoJSON(ST_Collect(ST_MakePolygon(er.ring))) FROM
-        (
-        SELECT ST_ExteriorRing((ST_Dump(ST_Union(ST_Buffer(geom, 0.0), lines.g))).geom) as ring FROM {table}, lines WHERE name = %s
-        ) as er
-        """.format(table=config.TABLE, cross=config.CROSSING_TABLE), (ids, region))
-        res = cur.fetchone()
-        if not res:
-            return jsonify(status='Failed to extend geometry')
-        f = { "type": "Feature", "properties": {}, "geometry": json.loads(res[0]) }
-        #return jsonify(type="FeatureCollection", features=[f])
-        return jsonify(type="Feature", properties={}, geometry=json.loads(res[0]))
-    else:
-        cur.execute("""
-        WITH lines as (SELECT ST_Buffer(ST_Collect(line), 0.002, 1) as g FROM {cross} WHERE id IN %s)
-        UPDATE {table} SET geom = res.g FROM
-        (
-        SELECT ST_Collect(ST_MakePolygon(er.ring)) as g FROM
-        (
-        SELECT ST_ExteriorRing((ST_Dump(ST_Union(ST_Buffer(geom, 0.0), lines.g))).geom) as ring FROM {table}, lines WHERE name = %s
-        ) as er
-        ) as res
-        WHERE name = %s
-        """.format(table=config.TABLE, cross=config.CROSSING_TABLE), (ids, region, region))
-        cur.execute("""
-        UPDATE {table} b SET geom = ST_Difference(b.geom, o.geom)
-        FROM {table} o
-        WHERE ST_Overlaps(b.geom, o.geom)
-        AND o.name = %s
-        """.format(table=config.TABLE), (region,))
-        cur.execute("UPDATE {cross} SET processed = 1 WHERE id IN %s".format(cross=config.CROSSING_TABLE), (ids,))
-        g.conn.commit()
-    return jsonify(status='ok')
-
 
 @app.route('/backup')
 def backup_do():

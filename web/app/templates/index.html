@@ -23,12 +23,12 @@
 			#info { margin-top: 1em; }
 			#b_delete, #b_clear, .back_del { font-size: 8pt; }
 			#split, #join, #join_to_parent, #point,
-                #divide, #backup, #fixcross { display: none; }
+                #divide, #backup { display: none; }
 			.actions input[type='text'], #search input[type='text'] { width: 150px; }
 			#header { border-bottom: 1px solid gray; margin-bottom: 1em; padding-bottom: 1em; }
 			#f_topo, #f_chars, #f_comments, #links { font-size: 10pt; }
 			#backup_saving, #backup_restoring { margin-bottom: 1em; }
-			#filefm, #old_action, #josm_old, #cross_actions { display: none; }
+			#filefm, #old_action, #josm_old { display: none; }
 			#h_iframe { display: block; width: 100%; height: 80px; }
             a, a:hover, a:visited { color: blue; }
             #start_over, #start_over:hover, #start_over:visited { color: red; }
@@ -225,16 +225,6 @@
 				<div>Или выберите набор границ для восстановления:</div>
 				<div id="backup_list"></div>
 				<button onclick="bBackupCancel()">Вернуться</button>
-			</div>
-			<div id="fixcross" class="actions">
-				Границы региона <span id="fc_sel"></span> будут поправлены, чтобы включать в себя подсвеченные красным линии.
-				Кликайте на линии, чтобы изменять их статус.<br>
-				<br>
-				<button onclick="bFixCrossPreview()">Посмотреть, что получится</button><br>
-				<div id="fc_do">
-					<button onclick="bFixCrossDo()">Включить линии в контур</button>
-				</div>
-				<button onclick="bFixCrossCancel()">Вернуться</button>
 			</div>
 		</div>
 		<div id="map"></div>
