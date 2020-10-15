@@ -68,20 +68,22 @@ function init() {
 function getServerConfiguration() {
 	$.ajax(getServer('config'), {
 		success: function(res) {
-			if( res.osm )
-				$('#osm_actions').css('display', 'block');
+			if( res.osm ) {
+				$('#unbound_actions').show();
+				$('#b_divide').show();
+			}
 			if( res.tables && res.tables.length > 0 ) {
 				config.OLD_BORDERS_NAME = res.tables[0];
-				$('#old_action').css('display', 'block');
+				$('#old_action').show();
 				$('#josm_old').css('display', 'inline');
 			}
 			if( res.backup ) {
 				$('#backups').show();
 			}
 			if( res.readonly ) {
-				$('#action_buttons').css('display', 'none');
-				$('#import_link').css('display', 'none');
-				$('#backups').css('display', 'none');
+				$('#action_buttons').hide();
+				$('#import_link').hide();
+				$('#backups').hide();
 				config.READONLY = true;
 			}
 			if( !res.readonly && IMPORT_ENABLED ) {
@@ -268,7 +270,12 @@ function selectLayer(e) {
 		$('#b_disable').text(props['disabled'] ? 'Вернуть' : 'Убрать');
 	} else
 		selectedId = null;
-	$('#actions').css('visibility', selectedId == null ? 'hidden' : 'visible');
+
+	if (selectedId)
+	    $('#selected_border_actions').show();
+	else
+	    $('#selected_border_actions').hide();
+
 	$('#rename').hide();
 }
 
@@ -894,7 +901,7 @@ function bDivide() {
 	divSelectedId = selectedId;
 	$('#actions').hide();
 	$('#d_count').hide();
-	$('#b_divide').hide();
+	$('#b_divide_do').hide();
 	$('#divide').show();
 	// pre-fill 'like' and 'where' fields
 	$('#region_to_divide').text(borders[divSelectedId].name + ' (' +
@@ -933,7 +940,7 @@ function bDividePreview() {
     }
     clearDivideLayers();
 	$('#d_count').hide();
-	$('#b_divide').hide();
+	$('#b_divide_do').hide();
     var apply_to_similar= $('#apply_to_similar').prop('checked');
     var params = {
         'id': divSelectedId,
@@ -981,9 +988,9 @@ function bDivideDrawPreview(response) {
     }
 	$('#d_count').text(subregions_count_text).show();
     if (show_divide_button)
-        $('#b_divide').show();
+        $('#b_divide_do').show();
     else
-        $('#b_divide').hide();
+        $('#b_divide_do').hide();
 }
 
 function bDivideDo() {
