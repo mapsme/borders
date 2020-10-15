@@ -79,7 +79,7 @@ def fetch_borders(**kwargs):
     query = f"""
         SELECT name, geometry, nodes, modified, disabled, count_k, cmnt,
                (CASE WHEN area = 'NaN' THEN 0 ELSE area END) AS area,
-               id, admin_level, parent_id, parent_name,
+               id, admin_level, parent_id, parent_name, parent_admin_level,
                mwm_size_est
         FROM (
             SELECT name,
@@ -98,6 +98,9 @@ def fetch_borders(**kwargs):
                ( SELECT name FROM {table}
                  WHERE id = t.parent_id
                ) AS parent_name,
+               ( SELECT admin_level FROM {osm_table}
+                 WHERE osm_id = (SELECT parent_id FROM {table} WHERE id = t.id)
+               ) AS parent_admin_level,
                mwm_size_est
             FROM {table} t
             WHERE ({where_clause}) {leaves_filter}
@@ -118,10 +121,11 @@ def fetch_borders(**kwargs):
                   'id': region_id,
                   'admin_level': rec[9],
                   'parent_id': rec[10],
-                  'parent_name': rec[11] or '',
+                  'parent_name': rec[11],
+                  'parent_admin_level': rec[12],
                   'country_id': country_id,
                   'country_name': country_name,
-                  'mwm_size_est': rec[12]
+                  'mwm_size_est': rec[13]
                 }
         feature = {'type': 'Feature',
                    'geometry': json.loads(rec[1]),

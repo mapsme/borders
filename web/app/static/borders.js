@@ -258,7 +258,7 @@ function selectLayer(e) {
 			e.target.setStyle({ fillOpacity: 0.01 });
 		$('#b_name').text(props['name']);
         $('#b_al').text(props['admin_level'] ? '('+props['admin_level']+')' : '');
-		$('#b_parent_name').text(props['parent_name']);
+		$('#b_parent_name').text(getParentBorderRepresentation(props));
 		$('#b_size').text(Math.round(props['count_k'] * BYTES_FOR_NODE / 1024 / 1024) + ' MB');
 		$('#pa_size').text(Math.round(props['mwm_size_est']/1024) + ' MB');
 		//$('#b_nodes').text(borders[selectedId].layer.getLatLngs()[0].length);
@@ -632,7 +632,9 @@ function processPotentialParents(answer) {
         var parent_id = parent.properties.id;
         potentialParents[parent_id] = parent;
         var div = $('<div/>').appendTo(potentialParentsDiv);
-        var name = parent.properties.name || '' + parent_id;
+        var al = parent.properties.admin_level;
+        var al_str = al ? ' (' + al + ')' : '';
+        var name = (parent.properties.name || '' + parent_id) + al_str;
         $('<span>' + name + '</span>').appendTo(div);
         $('<span> </span>').appendTo(div);
         $('<a href="#">показать</a>')
@@ -781,6 +783,21 @@ function bJoinCancel() {
 
 var parentLayer = null;
 
+function getParentBorderRepresentation(props, long) {
+    var parent_repr = '';
+
+    if (props['parent_id']) {
+        parent_repr = props['parent_name'] || '' + props['parent_id'];
+
+        if (long && props['parent_name'])
+            parent_repr += ' [' + props['parent_id'] + ']';
+
+        if (props['parent_admin_level'])
+            parent_repr += ' (' + props['parent_admin_level'] + ')';
+    }
+    return parent_repr;
+}
+
 function bJoinToParent() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
@@ -791,7 +808,7 @@ function bJoinToParent() {
     }
 	joinSelected = selectedId;
 	$('#j_to_parent_sel').text(props['name'] + ' (' + selectedId + ')');
-	$('#j_sel_parent').text(props['parent_name'] + ' (' + props['parent_id'] + ')');
+	$('#j_sel_parent').text(getParentBorderRepresentation(props, true));
 	$('#actions').hide();
 	$('#join_to_parent').show();
 }
