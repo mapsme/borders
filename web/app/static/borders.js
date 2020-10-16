@@ -568,13 +568,6 @@ function bTogglePotentialParents() {
         });
     }
 }
-/*
-function clearObject(obj) {
-    for (var k in obj)
-        if (obj.hasOwnProperty(k))
-            delete obj[k];
-}
-*/
 
 function makeShowParent(parent_id) {
     return function(event) {

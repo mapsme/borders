@@ -165,7 +165,7 @@ def query_bbox():
     )
     return jsonify(
         status='ok',
-        geojson={'type':'FeatureCollection', 'features': borders}
+        geojson={'type': 'FeatureCollection', 'features': borders}
     )
 
 @app.route('/small')
@@ -257,15 +257,18 @@ def split():
     table = config.TABLE
     cur = g.conn.cursor()
     # check that we're splitting a single polygon
-    cur.execute(f'SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s;', (region_id,))
+    cur.execute(f"""
+        SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
+        """, (region_id,)
+    )
     res = cur.fetchone()
     if not res or res[0] != 1:
         return jsonify(status='border should have one outer ring')
     cur.execute(f"""
-            SELECT ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom)
-            FROM {table}
-            WHERE id = %s
-            """, (line, region_id)
+        SELECT ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom)
+        FROM {table}
+        WHERE id = %s
+        """, (line, region_id)
     )
     if cur.rowcount > 1:
         # no use of doing anything if the polygon wasn't modified
@@ -273,12 +276,14 @@ def split():
         for res in cur:
             geometries.append(res[0])
         # get region properties and delete old border
-        cur.execute(f'SELECT name, parent_id, disabled FROM {table} WHERE id = %s', (region_id,))
+        cur.execute(f"""
+            SELECT name, parent_id, disabled FROM {table} WHERE id = %s
+            """, (region_id,))
         name, parent_id, disabled = cur.fetchone()
         if save_region:
             parent_id = region_id
         else:
-            cur.execute(f'DELETE FROM {table} WHERE id = %s', (region_id,))
+            cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
         base_name = name
         # insert new geometries
         counter = 1
@@ -318,7 +323,8 @@ def join_borders():
                     mwm_size_est = {table}.mwm_size_est + b2.mwm_size_est,
                     count_k = -1
                 FROM (SELECT geom, mwm_size_est FROM {table} WHERE id = %s) AS b2
-                WHERE id = %s""", (region_id2, region_id1))
+                WHERE id = %s""", (region_id2, region_id1)
+        )
         cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id2,))
     except psycopg2.Error as e:
         g.conn.rollback()
@@ -330,8 +336,7 @@ def get_parent_region_id(region_id):
     cursor = g.conn.cursor()
     cursor.execute(f"""
         SELECT parent_id FROM {config.TABLE} WHERE id = %s
-        """, (region_id,)
-    )
+        """, (region_id,))
     rec = cursor.fetchone()
     parent_id = int(rec[0]) if rec and rec[0] is not None else None
     return parent_id
@@ -340,8 +345,7 @@ def get_child_region_ids(region_id):
     cursor = g.conn.cursor()
     cursor.execute(f"""
         SELECT id FROM {config.TABLE} WHERE parent_id = %s
-        """, (region_id,)
-    )
+        """, (region_id,))
     child_ids = []
     for rec in cursor:
         child_ids.append(int(rec[0]))
@@ -356,7 +360,7 @@ def join_to_parent():
     region_id = int(request.args.get('id'))
     parent_id = get_parent_region_id(region_id)
     if not parent_id:
-        return jsonify(status=f'Region {region_id} does not exist or has no parent')
+        return jsonify(status=f"Region {region_id} does not exist or has no parent")
     cursor = g.conn.cursor()
     descendants = [[parent_id]]  # regions ordered by hierarchical level
 
@@ -373,8 +377,7 @@ def join_to_parent():
         lowerst_ids = descendants.pop()
         ids_str = ','.join(str(x) for x in lowerst_ids)
         cursor.execute(f"""
-            DELETE FROM {config.TABLE} WHERE id IN ({ids_str})
-            """
+            DELETE FROM {config.TABLE} WHERE id IN ({ids_str})"""
         )
     g.conn.commit()
     return jsonify(status='ok')
@@ -407,11 +410,13 @@ def find_osm_borders():
         FROM {config.OSM_TABLE} 
         WHERE ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326))
         ORDER BY admin_level DESC, name ASC
-        """, (lon, lat))
+        """, (lon, lat)
+    )
     result = []
     for rec in cur:
-        b = { 'id': rec[0], 'name': rec[1], 'admin_level': rec[2], 'area': rec[3] }
-        result.append(b)
+        border = {'id': rec[0], 'name': rec[1],
+                  'admin_level': rec[2], 'area': rec[3]}
+        result.append(border)
     return jsonify(borders=result)
 
 @app.route('/from_osm')
@@ -471,8 +476,7 @@ def disable_border():
     region_id = int(request.args.get('id'))
     cur = g.conn.cursor()
     cur.execute(f"UPDATE {config.TABLE} SET disabled = true WHERE id = %s",
-                (region_id,)
-    )
+                (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -483,8 +487,7 @@ def enable_border():
     region_id = int(request.args.get('id'))
     cur = g.conn.cursor()
     cur.execute(f"UPDATE {config.TABLE} SET disabled = false WHERE id = %s",
-                (region_id,)
-    )
+                (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -494,8 +497,7 @@ def update_comment():
     comment = request.form['comment']
     cur = g.conn.cursor()
     cur.execute(f"UPDATE {config.TABLE} SET cmnt = %s WHERE id = %s",
-                (comment, region_id)
-    )
+                (comment, region_id))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -553,7 +555,8 @@ def get_predecessors(region_id):
         cursor.execute(f"""
             SELECT id, name, parent_id
             FROM {table} WHERE id={region_id}
-            """)
+            """
+        )
         rec = cursor.fetchone()
         if not rec:
            raise Exception(f"No record in '{table}' table with id = {region_id}")
@@ -601,7 +604,7 @@ def divide_preview():
     try:
         next_level = int(request.args.get('next_level'))
     except ValueError:
-        return jsonify(status='Not a number in next level.')
+        return jsonify(status="Not a number in next level")
     is_admin = is_administrative_region(region_id)
     region_ids = [region_id]
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
@@ -616,7 +619,7 @@ def divide_preview():
         try:
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
-            return jsonify(status='Not a number in thresholds.')
+            return jsonify(status="Not a number in thresholds")
         return divide_into_clusters_preview(
                 region_ids, next_level,
                 mwm_size_thr)
@@ -649,8 +652,8 @@ def get_subregions_one_for_preview(region_id, next_level):
     )
     subregions = []
     for rec in cur:
-        feature = { 'type': 'Feature', 'geometry': json.loads(rec[1]),
-                    'properties': { 'name': rec[0] } }
+        feature = {'type': 'Feature', 'geometry': json.loads(rec[1]),
+                   'properties': {'name': rec[0]}}
         subregions.append(feature)
     return subregions
 
@@ -672,15 +675,18 @@ def get_clusters_for_preview_one(region_id, next_level, mwm_size_thr):
     cursor.execute(f"""
         SELECT 1 FROM {autosplit_table}
         WHERE {where_clause}
-        """, splitting_sql_params)
+        """, splitting_sql_params
+    )
     if cursor.rowcount == 0:
         split_region(g.conn, region_id, next_level, mwm_size_thr)
 
     cursor.execute(f"""
-        SELECT subregion_ids[1], ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
+        SELECT subregion_ids[1],
+               ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
         FROM {autosplit_table}
         WHERE {where_clause}
-        """, splitting_sql_params)
+        """, splitting_sql_params
+    )
     clusters = []
     for rec in cursor:
         cluster = {
@@ -715,7 +721,7 @@ def divide():
     try:
         next_level = int(request.args.get('next_level'))
     except ValueError:
-        return jsonify(status='Not a number in next level.')
+        return jsonify(status="Not a number in next level")
     is_admin = is_administrative_region(region_id)
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     region_ids = [region_id]
@@ -730,7 +736,7 @@ def divide():
         try:
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
-            return jsonify(status='Not a number in thresholds.')
+            return jsonify(status="Not a number in thresholds")
         return divide_into_clusters(
                 region_ids, next_level,
                 mwm_size_thr)
@@ -791,7 +797,8 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
         cursor.execute(f"""
             SELECT 1 FROM {autosplit_table}
             WHERE {where_clause}
-            """, splitting_sql_params)
+            """, splitting_sql_params
+        )
         if cursor.rowcount == 0:
             split_region(g.conn, region_id, next_level, mwm_size_thr)
 
@@ -800,7 +807,8 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
         cursor.execute(f"""
             SELECT subregion_ids
             FROM {autosplit_table} WHERE {where_clause}
-            """, splitting_sql_params)
+            """, splitting_sql_params
+        )
         if cursor.rowcount == 1:
             continue
         for rec in cursor:
@@ -818,7 +826,8 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
                 INSERT INTO {table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
                 SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1, mwm_size_est
                 FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
-                """, (name, cluster_id,) + splitting_sql_params)
+                """, (name, cluster_id,) + splitting_sql_params
+            )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -852,7 +861,8 @@ def chop_largest_or_farthest():
                        ST_Area(ST_Collect(g)) as a
                 FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
                 GROUP BY name, disabled)
-            ) x""")
+            ) x"""
+    )
     for border_id in (free_id1, free_id2):
         update_border_mwm_size_estimation(g.conn, border_id)
     g.conn.commit()
@@ -865,15 +875,15 @@ def draw_hull():
     border_id = int(request.args.get('id'))
     cursor = g.conn.cursor()
     table = config.TABLE
-    cursor.execute(f"""
-        SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
-        """, (border_id,))
+    cursor.execute(f"SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s",
+                   (border_id,))
     res = cursor.fetchone()
     if not res or res[0] < 2:
         return jsonify(status='border should have more than one outer ring')
     cursor.execute(f"""
         UPDATE {table} SET geom = ST_ConvexHull(geom)
-        WHERE id = %s""", (border_id,))
+        WHERE id = %s""", (border_id,)
+    )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -882,10 +892,11 @@ def backup_do():
     if config.READONLY:
         abort(405)
     cur = g.conn.cursor()
-    cur.execute("SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup) from {};".format(config.BACKUP))
+    cur.execute(f"""SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup)
+                    FROM {config.BACKUP}""")
     (timestamp, tsmax) = cur.fetchone()
     if timestamp == tsmax:
-        return jsonify(status='please try again later')
+        return jsonify(status="please try again later")
     backup_table = config.BACKUP
     table = config.TABLE
     cur.execute(f"""
@@ -911,8 +922,8 @@ def backup_restore():
     cur.execute(f"SELECT count(1) from {backup_table} WHERE backup = %s",(ts,))
     (count,) = cur.fetchone()
     if count <= 0:
-        return jsonify(status='no such timestamp')
-    cur.execute(f'DELETE FROM {table}')
+        return jsonify(status="no such timestamp")
+    cur.execute(f"DELETE FROM {table}")
     cur.execute(f"""
         INSERT INTO {table}
             (id, name, parent_id, geom, disabled, count_k, modified, cmnt, mwm_size_est)
@@ -927,10 +938,13 @@ def backup_restore():
 @app.route('/backlist')
 def backup_list():
     cur = g.conn.cursor()
-    cur.execute("SELECT backup, count(1) from {} group by backup order by backup desc;".format(config.BACKUP))
+    cur.execute(f"""SELECT backup, count(1)
+                    FROM {config.BACKUP}
+                    GROUP BY backup
+                    ORDER BY backup DESC""")
     result = []
     for res in cur:
-        result.append({ 'timestamp': res[0], 'text': res[0], 'count': res[1] })
+        result.append({'timestamp': res[0], 'text': res[0], 'count': res[1]})
     # todo: count number of different objects for the last one
     return jsonify(backups=result)
 
@@ -940,11 +954,11 @@ def backup_delete():
         abort(405)
     ts = request.args.get('timestamp')
     cur = g.conn.cursor()
-    cur.execute('SELECT count(1) from {} where backup = %s;'.format(config.BACKUP), (ts,))
+    cur.execute(f"SELECT count(1) FROM {config.BACKUP} WHERE backup = %s", (ts,))
     (count,) = cur.fetchone()
     if count <= 0:
         return jsonify(status='no such timestamp')
-    cur.execute('DELETE FROM {} WHERE backup = %s;'.format(config.BACKUP), (ts,))
+    cur.execute(f"DELETE FROM {config.BACKUP} WHERE backup = %s", (ts,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -961,10 +975,10 @@ def make_osm():
         table = config.TABLE
     borders = fetch_borders(
         table=table,
-        where_clause=f'geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),'
-                                          f'ST_Point({xmax}, {ymax}))'
+        where_clause=f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
+                                          f"ST_Point({xmax}, {ymax}))"
     )
-    node_pool = { 'id': 1 } # 'lat_lon': id
+    node_pool = {'id': 1} # 'lat_lon': id
     regions = [] # { id: id, name: name, rings: [['outer', [ids]], ['inner', [ids]], ...] }
     for border in borders:
         geometry = border['geometry'] #json.loads(rec[2])
@@ -1033,16 +1047,23 @@ def josm_borders_along():
     line = request.args.get('line')
     cur = g.conn.cursor()
     # select all outer osm borders inside a buffer of the given line
-    cur.execute("""
-        with linestr as (
-            select ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)) as line
-            from {table} where name = %s
-        ), osmborders as (
-            select (ST_Dump(way)).geom as g from {osm}, linestr where ST_Intersects(line, way)
+    table = config.TABLE
+    osm_table = config.OSM_TABLE
+    cur.execute(f"""
+        WITH linestr AS (
+            SELECT ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)) as line
+            FROM {table}
+            WHERE name = %s
+        ), osmborders AS (
+            SELECT (ST_Dump(way)).geom as g
+            FROM {osm_table}, linestr
+            WHERE ST_Intersects(line, way)
         )
-        select ST_AsGeoJSON((ST_Dump(ST_LineMerge(ST_Intersection(ST_Collect(ST_ExteriorRing(g)), line)))).geom) from osmborders, linestr group by line
-        """.format(table=config.TABLE, osm=config.OSM_TABLE), (line, name))
-
+        SELECT ST_AsGeoJSON((ST_Dump(ST_LineMerge(ST_Intersection(ST_Collect(ST_ExteriorRing(g)), line)))).geom)
+        FROM osmborders, linestr
+        GROUP BY line
+        """, (line, name)
+    )
     node_pool = { 'id': 1 } # 'lat_lon': id
     lines = []
     for rec in cur:
@@ -1150,16 +1171,16 @@ def import_osm():
     if config.READONLY:
         abort(405)
     if not LXML:
-        return import_error('importing is disabled due to absent lxml library')
+        return import_error("importing is disabled due to absent lxml library")
     f = request.files['file']
     if not f:
-        return import_error('failed upload')
+        return import_error("failed upload")
     try:
         tree = etree.parse(f)
     except:
-        return import_error('malformed xml document')
+        return import_error("malformed xml document")
     if not tree:
-        return import_error('bad document')
+        return import_error("bad document")
     root = tree.getroot()
 
     # read nodes and ways
@@ -1168,7 +1189,9 @@ def import_osm():
         if node.get('action') == 'delete':
             continue
         modified = int(node.get('id')) < 0 or node.get('action') == 'modify'
-        nodes[node.get('id')] = { 'lat': float(node.get('lat')), 'lon': float(node.get('lon')), 'modified': modified }
+        nodes[node.get('id')] = {'lat': float(node.get('lat')),
+                                 'lon': float(node.get('lon')),
+                                 'modified': modified }
     ways = {} # id: { name, disabled, modified, bbox, nodes, used }
     for way in root.iter('way'):
         if way.get('action') == 'delete':
@@ -1179,7 +1202,7 @@ def import_osm():
         for node in way.iter('nd'):
             ref = node.get('ref')
             if not ref in nodes:
-                return import_error('missing node {} in way {}'.format(ref, way.get('id')))
+                return import_error("missing node {} in way {}".format(ref, way.get('id')))
             way_nodes.append(ref)
             if nodes[ref]['modified']:
                 modified = True
@@ -1192,8 +1215,10 @@ def import_osm():
             if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
                 disabled = True
         if len(way_nodes) < 2:
-            return import_error('way with less than 2 nodes: {}'.format(way.get('id')))
-        ways[way.get('id')] = { 'name': name, 'disabled': disabled, 'modified': modified, 'bbox': bbox, 'nodes': way_nodes, 'used': False }
+            return import_error("way with less than 2 nodes: {}".format(way.get('id')))
+        ways[way.get('id')] = {'name': name, 'disabled': disabled,
+                               'modified': modified, 'bbox': bbox,
+                               'nodes': way_nodes, 'used': False}
 
     # finally we are constructing regions: first, from multipolygons
     regions = {} # /*name*/ id: { modified, disabled, wkt, type: 'r'|'w' }
@@ -1215,7 +1240,7 @@ def import_osm():
             if tag.get('k') == 'type' and tag.get('v') == 'multipolygon':
                 multi = True
         if not multi:
-            return import_error('found non-multipolygon relation: {}'.format(rel.get('id')))
+            return import_error("found non-multipolygon relation: {}".format(rel.get('id')))
         #if not name:
         #    return import_error('relation {} has no name'.format(rel.get('id')))
         #if name in regions:
@@ -1223,7 +1248,7 @@ def import_osm():
         for member in rel.iter('member'):
             ref = member.get('ref')
             if not ref in ways:
-                return import_error('missing way {} in relation {}'.format(ref, rel.get('id')))
+                return import_error("missing way {} in relation {}".format(ref, rel.get('id')))
             if ways[ref]['modified']:
                 modified = True
             role = member.get('role')
@@ -1232,13 +1257,13 @@ def import_osm():
             elif role == 'inner':
                 inner.append(ways[ref])
             else:
-                return import_error('unknown role {} in relation {}'.format(role, rel.get('id')))
+                return import_error("unknown role {} in relation {}".format(role, rel.get('id')))
             ways[ref]['used'] = True
         # after parsing ways, so 'used' flag is set
         if rel.get('action') == 'delete':
             continue
         if len(outer) == 0:
-            return import_error('relation {} has no outer ways'.format(rel.get('id')))
+            return import_error("relation {} has no outer ways".format(rel.get('id')))
         # reconstruct rings in multipolygon
         for multi in (inner, outer):
             i = 0
@@ -1261,13 +1286,13 @@ def import_osm():
                         else:
                             j = j + 1
                     if not productive:
-                        return import_error('unconnected way in relation {}'.format(rel.get('id')))
+                        return import_error("unconnected way in relation {}".format(rel.get('id')))
                 i = i + 1
         # check for 2-node rings
         for multi in (outer, inner):
             for way in multi:
                 if len(way['nodes']) < 3:
-                    return import_error('Way in relation {} has only {} nodes'.format(rel.get('id'), len(way['nodes'])))
+                    return import_error("Way in relation {} has only {} nodes".format(rel.get('id'), len(way['nodes'])))
         # sort inner and outer rings
         polygons = []
         for way in outer:
@@ -1292,11 +1317,11 @@ def import_osm():
             continue
         if not w['name']:
             #continue
-            return import_error('unused in multipolygon way with no name: {}'.format(wid))
+            return import_error("unused in multipolygon way with no name: {}".format(wid))
         if w['nodes'][0] != w['nodes'][-1]:
-            return import_error('non-closed unused in multipolygon way: {}'.format(wid))
+            return import_error("non-closed unused in multipolygon way: {}".format(wid))
         if len(w['nodes']) < 3:
-            return import_error('way {} has {} nodes'.format(wid, len(w['nodes'])))
+            return import_error("way {} has {} nodes".format(wid, len(w['nodes'])))
         #if w['name'] in regions:
         #    return import_error('way {} has the same name as other way/multipolygon'.format(wid))
         regions[wid] = {
@@ -1321,9 +1346,9 @@ def import_osm():
         except psycopg2.Error as e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             traceback.print_exception(exc_type, exc_value, exc_traceback)
-            return import_error('Database error. See server log for details')
+            return import_error("Database error. See server log for details")
         except Exception as e:
-            return import_error(f'Import error: {str(e)}')
+            return import_error(f"Import error: {str(e)}")
         if region_id < 0:
             added += 1
             if free_id is None:
@@ -1377,8 +1402,7 @@ def create_or_update_region(region, free_id):
         return region_id
     else:
         cursor.execute(f"SELECT count(1) FROM {table} WHERE id = %s",
-                       (-region['id'],)
-        )
+                       (-region['id'],))
         rec = cursor.fetchone()
         if rec[0] == 0:
             raise Exception(f"Can't find border ({region['id']}) for update")
@@ -1434,12 +1458,7 @@ def find_potential_parents(region_id):
 def potential_parents():
     region_id = int(request.args.get('id'))
     parents = find_potential_parents(region_id)
-    return jsonify(
-            status='ok',
-            parents=parents
-            #geojson={'type':'FeatureCollection', 'features': borders}
-    )
-
+    return jsonify(status='ok', parents=parents)
 
 @app.route('/poly')
 def export_poly():
@@ -1457,8 +1476,8 @@ def export_poly():
         ymin = request.args.get('ymin')
         ymax = request.args.get('ymax')
         fetch_borders_args['where_clause'] = (
-                f'geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),'
-                                     f'ST_Point({xmax}, {ymax}))'
+                f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
+                                     f"ST_Point({xmax}, {ymax}))"
         )
     borders = fetch_borders(**fetch_borders_args)
 
@@ -1521,7 +1540,8 @@ def statistics():
                      WHEN coalesce(cmnt, '') = '' THEN false
                      ELSE true
                   END) AS cmnt
-            FROM {table}""")
+            FROM {table}"""
+        )
         result = []
         for res in cur:
             coord = json.loads(res[3])['coordinates']
@@ -1539,9 +1559,9 @@ def statistics():
                     END
                 ) / 1000000,
                 sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g)))
-            FROM (SELECT name, (ST_Dump(geom)).geom AS g
-                  FROM {table}) a
-                  GROUP BY name""")
+            FROM (SELECT name, (ST_Dump(geom)).geom AS g FROM {table}) a
+            GROUP BY name"""
+        )
         result = []
         for res in cur:
             coord = json.loads(res[4])['coordinates']
