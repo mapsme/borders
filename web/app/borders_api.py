@@ -863,13 +863,18 @@ def chop_largest_or_farthest():
 def draw_hull():
     if config.READONLY:
         abort(405)
-    name = request.args.get('name').encode('utf-8')
-    cur = g.conn.cursor()
-    cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
-    res = cur.fetchone()
+    border_id = int(request.args.get('id'))
+    cursor = g.conn.cursor()
+    table = config.TABLE
+    cursor.execute(f"""
+        SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
+        """, (border_id,))
+    res = cursor.fetchone()
     if not res or res[0] < 2:
         return jsonify(status='border should have more than one outer ring')
-    cur.execute('update {} set geom = ST_ConvexHull(geom) where name = %s;'.format(config.TABLE), (name,))
+    cursor.execute(f"""
+        UPDATE {table} SET geom = ST_ConvexHull(geom)
+        WHERE id = %s""", (border_id,))
     g.conn.commit()
     return jsonify(status='ok')
 

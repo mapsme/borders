@@ -1049,13 +1049,8 @@ function bHull() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('hull'), {
-		data: { 'name': selectedId },
-		success: function(answer) {
-		    if (answer.status !== 'ok')
-		        alert(answer.status);
-		    else
-		        updateBorders();
-	        }
+		data: { 'id': selectedId },
+		success: makeAnswerHandler(updateBorders)
 	});
 }
 
