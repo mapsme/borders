@@ -4,7 +4,6 @@ from mwm_size_predictor import MwmSizePredictor
 
 osm_table = config.OSM_TABLE
 osm_places_table = config.OSM_PLACES_TABLE
-size_predictor = MwmSizePredictor()
 
 
 def get_subregions_info(conn, region_id, region_table,
@@ -93,10 +92,47 @@ def _add_mwm_size_estimation(subregions):
     ]
 
     feature_array = [x[1] for x in subregions_sorted]
-    predictions = size_predictor.predict(feature_array)
+    predictions = MwmSizePredictor.predict(feature_array)
 
     for subregion_id, mwm_size_prediction in zip(
         (x[0] for x in subregions_sorted),
         predictions
     ):
         subregions[subregion_id]['mwm_size_est'] = mwm_size_prediction
+
+
+def update_border_mwm_size_estimation(conn, border_id):
+    table = config.TABLE
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT ST_Area(geography(geom))/1.0E+6 area
+        FROM {table}
+        WHERE id = %s""", (border_id, ))
+    rec = cursor.fetchone()
+    border_data = {
+        'area': rec[0],
+        'urban_pop': 0,
+        'city_cnt': 0,
+        'hamlet_cnt': 0
+    }
+    cursor.execute(f"""
+        SELECT COALESCE(p.population, 0), p.place
+        FROM {table} b, {config.OSM_PLACES_TABLE} p
+        WHERE id = %s
+            AND ST_CONTAINS(b.geom, p.center)
+        """, (border_id, ))
+    for place_population, place_type in cursor:
+        if place_type in ('city', 'town'):
+            border_data['city_cnt'] += 1
+            border_data['urban_pop'] += place_population
+        else:
+            border_data['hamlet_cnt'] += 1
+
+    feature_array = [
+        border_data[f] for f in
+        ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt')
+    ]
+    mwm_size_est = MwmSizePredictor.predict(feature_array)
+    cursor.execute(f"UPDATE {table} SET mwm_size_est = %s WHERE id = %s",
+                   (mwm_size_est, border_id))
+    conn.commit()

@@ -1040,8 +1040,8 @@ function bLargest() {
 	if( !selectedId || !(selectedId in borders) )
 		return;
 	$.ajax(getServer('chop1'), {
-		data: { 'name': selectedId },
-		success: updateBorders
+		data: { 'id': selectedId },
+		success: makeAnswerHandler(updateBorders)
 	});
 }
 

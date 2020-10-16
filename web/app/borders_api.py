@@ -25,7 +25,11 @@ from countries_structure import (
     create_countries_initial_structure,
     get_osm_border_name_by_osm_id,
 )
-from subregions import get_subregions_info
+from subregions import (
+    get_subregions_info,
+    update_border_mwm_size_estimation,
+)
+
 
 try:
     from lxml import etree
@@ -279,6 +283,7 @@ def split():
         base_name = name
         # insert new geometries
         counter = 1
+        new_ids = []
         free_id = get_free_id()
         for geom in geometries:
             cur.execute(f"""
@@ -286,8 +291,11 @@ def split():
                     VALUES (%s, %s, ST_GeomFromText(%s, 4326), %s, -1, now(), %s)
                 """, (free_id, f'{base_name}_{counter}', geom, disabled, parent_id)
             )
+            new_ids.append(free_id)
             counter += 1
             free_id -= 1
+        for border_id in new_ids:
+            update_border_mwm_size_estimation(g.conn, border_id)
         g.conn.commit()
 
     return jsonify(status='ok')
@@ -430,6 +438,7 @@ def copy_from_osm():
         """, (osm_id,)
     )
     assign_region_to_lowerst_parent(osm_id)
+    update_border_mwm_size_estimation(g.conn, osm_id)
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -818,23 +827,35 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
 def chop_largest_or_farthest():
     if config.READONLY:
         abort(405)
-    name = request.args.get('name').encode('utf-8')
+    region_id = int(request.args.get('id'))
+    table = config.TABLE
     cur = g.conn.cursor()
-    cur.execute('select ST_NumGeometries(geom) from {} where name = %s;'.format(config.TABLE), (name,))
+    cur.execute(f"""SELECT ST_NumGeometries(geom)
+                    FROM {table}
+                    WHERE id = {region_id}""")
     res = cur.fetchone()
     if not res or res[0] < 2:
         return jsonify(status='border should have more than one outer ring')
-    cur.execute("""INSERT INTO {table} (name, disabled, modified, geom)
-            SELECT name, disabled, modified, geom from
+    free_id1 = get_free_id()
+    free_id2 = free_id1 - 1
+    cur.execute(f"""
+        INSERT INTO {table} (id, parent_id, name, disabled, modified, geom)
+            SELECT id, region_id, name, disabled, modified, geom FROM
             (
-            (WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g FROM {table} WHERE name = %s)
-            (SELECT name||'_main' as name, disabled, now() as modified, g as geom, ST_Area(g) as a FROM w ORDER BY a DESC LIMIT 1)
-            UNION ALL
-            SELECT name||'_small' as name, disabled, now() as modified, ST_Collect(g) AS geom, ST_Area(ST_Collect(g)) as a
-            FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
-            GROUP BY name, disabled)
-            ) x;""".format(table=config.TABLE), (name,))
-    cur.execute('delete from {} where name = %s;'.format(config.TABLE), (name,))
+                (WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g
+                            FROM {table} WHERE id = {region_id})
+                (SELECT {free_id1} id, {region_id} region_id, name||'_main' as name, disabled,
+                        now() as modified, g as geom, ST_Area(g) as a
+                 FROM w ORDER BY a DESC LIMIT 1)
+                UNION ALL
+                SELECT {free_id2} id, {region_id} region_id, name||'_small' as name, disabled,
+                       now() as modified, ST_Collect(g) AS geom,
+                       ST_Area(ST_Collect(g)) as a
+                FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
+                GROUP BY name, disabled)
+            ) x""")
+    for border_id in (free_id1, free_id2):
+        update_border_mwm_size_estimation(g.conn, border_id)
     g.conn.commit()
     return jsonify(status='ok')
 
