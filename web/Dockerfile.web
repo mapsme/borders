@@ -1,6 +1,6 @@
 FROM tiangolo/uwsgi-nginx-flask:latest
 
-RUN pip install flask_cors flask_compress psycopg2 unidecode numpy sklearn
+RUN pip install lxml flask_cors flask_compress psycopg2 unidecode numpy sklearn
 
 COPY app /app
 COPY ./uwsgi.ini /app

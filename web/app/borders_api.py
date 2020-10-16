@@ -1141,6 +1141,7 @@ def bbox_contains(outer, inner):
 
 @app.route('/import', methods=['POST'])
 def import_osm():
+    data = request.data
     if config.READONLY:
         abort(405)
     if not LXML:
