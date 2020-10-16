@@ -2,7 +2,10 @@ import itertools
 
 import config
 
-from subregions import get_subregions_info
+from subregions import (
+    get_subregions_info,
+    update_border_mwm_size_estimation,
+)
 
 
 table = config.TABLE
@@ -328,6 +331,8 @@ def _make_country_structure(conn, country_osm_id):
                                              admin_level, regions)
             _create_regions(conn, subregion_ids, regions)
             prev_region_ids = subregion_ids
+    if len(regions) == 1:
+        update_border_mwm_size_estimation(conn, country_osm_id)
 
 
 def create_countries_initial_structure(conn):
@@ -372,40 +377,3 @@ def _get_country_osm_id_by_name(conn, name):
     if not rec:
         raise CountryStructureException(f'Not found country "{name}"')
     return int(rec[0])
-
-
-
-splitting = [
-    # large region name, admin_level (2 in most cases), admin_level to split'n'merge, into subregions of what admin_level
-        ('Germany', 2, 4, 6),  #  Half of the country is covered by units of AL=5
-        ('Metropolitan France', 3, 4, 6),
-        ('Spain', 2, 4, 6),
-        ('Portugal', 2, 4, 6),
-        ('Belgium', 2, 4, 6),
-        ('Italy', 2, 4, 6),
-        ('Switzerland', 2, 2, 4),  # has admin_level=5
-        ('Austria', 2, 4, 6),
-        ('Poland', 2, 4, 6),  # 380(!) of AL=6
-        ('Czechia', 2, 6, 7),
-        ('Ukraine', 2, 4, 6),   # should merge back to region=4 level clusters
-        ('United Kingdom', 2, 5, 6),  # whole country is divided by level 4; level 5 is necessary but not comprehensive
-        ('Denmark', 2, 4, 7),
-        ('Norway', 2, 4, 7),
-        ('Sweden', 2, 4, 7),   # though division by level 4 is currently ideal
-        ('Finland', 2, 6, 7),  # though division by level 6 is currently ideal
-        ('Estonia', 2, 2, 6),
-        ('Latvia', 2, 4, 6),  # the whole country takes 56Mb, all 6-level units should merge into 4-level clusters
-        ('Lithuania', 2, 2, 4), # now Lithuania has 2 mwms of size 60Mb each
-        ('Belarus', 2, 2, 4),   # 6 regions + Minsk city. Would it be merged with the region?
-        ('Slovakia', 2, 2, 4),  # there are no subregions 5, 6, 7. Must leave all 8 4-level regions
-        ('Hungary', 2, 5, 6),
-        #('Slovenia', 2, 2, 8),  # no levels 3,4,5,6; level 7 incomplete.
-        ('Croatia', 2, 2, 6),
-        ('Bosnia and Herzegovina', 2, 2, 4), # other levels - 5, 6, 7 - are incomplete.
-        ('Serbia', 2, 4, 6),
-        ('Romania', 2, 2, 4),
-        ('Bulgaria', 2, 2, 4),
-        ('Greece', 2, 4, 5),   # has 7 4-level regions, must merge 5-level to them again
-        ('Ireland', 2, 5, 6),  # 5-level don't cover the whole country! Still...
-        ('Turkey', 2, 3, 4),
-    ]

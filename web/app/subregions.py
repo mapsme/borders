@@ -118,7 +118,7 @@ def update_border_mwm_size_estimation(conn, border_id):
     cursor.execute(f"""
         SELECT COALESCE(p.population, 0), p.place
         FROM {table} b, {config.OSM_PLACES_TABLE} p
-        WHERE id = %s
+        WHERE b.id = %s
             AND ST_CONTAINS(b.geom, p.center)
         """, (border_id, ))
     for place_population, place_type in cursor:
