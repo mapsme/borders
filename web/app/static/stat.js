@@ -1,4 +1,4 @@
-var MB_LIMIT = 50, MB_LIMIT2 = 80;
+var MB_LIMIT = 50, MB_LIMIT2 = 70;
 var KM_LIMIT = 50, POINT_LIMIT = 50000;
 
 function statInit() {

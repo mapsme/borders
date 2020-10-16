@@ -82,7 +82,7 @@ def fetch_borders(**kwargs):
                      if only_leaves else '')
     query = f"""
         SELECT name, geometry, nodes, modified, disabled, count_k, cmnt,
-               (CASE WHEN area = 'NaN' THEN 0 ELSE area END) AS area,
+               (CASE WHEN area = 'NaN'::DOUBLE PRECISION THEN 0 ELSE area END) AS area,
                id, admin_level, parent_id, parent_name, parent_admin_level,
                mwm_size_est
         FROM (
@@ -111,7 +111,6 @@ def fetch_borders(**kwargs):
         ) q
         ORDER BY area DESC
         """
-    #print(query)
     cur = g.conn.cursor()
     cur.execute(query)
     borders = []
@@ -402,7 +401,7 @@ def find_osm_borders():
     cur.execute(f"""
         SELECT osm_id, name, admin_level,
                 (CASE
-                    WHEN ST_Area(geography(way)) = 'NaN' THEN 0
+                    WHEN ST_Area(geography(way)) = 'NaN'::DOUBLE PRECISION THEN 0
                     ELSE ST_Area(geography(way))/1000000
                 END) AS area_km
         FROM {config.OSM_TABLE} 
@@ -891,8 +890,10 @@ def backup_do():
     table = config.TABLE
     cur.execute(f"""
         INSERT INTO {backup_table}
-             (backup, id, name, parent_id, geom, disabled, count_k, modified, cmnt)
-          SELECT %s, id, name, parent_id, geom, disabled, count_k, modified, cmnt
+             (backup, id, name, parent_id, geom, disabled, count_k,
+                modified, cmnt, mwm_size_est)
+          SELECT %s, id, name, parent_id, geom, disabled, count_k,
+                modified, cmnt, mwm_size_est
           FROM {table}
         """, (timestamp,)
     )
@@ -914,8 +915,8 @@ def backup_restore():
     cur.execute(f'DELETE FROM {table}')
     cur.execute(f"""
         INSERT INTO {table}
-            (id, name, parent_id, geom, disabled, count_k, modified, cmnt)
-          SELECT id, name, parent_id, geom, disabled, count_k, modified, cmnt
+            (id, name, parent_id, geom, disabled, count_k, modified, cmnt, mwm_size_est)
+          SELECT id, name, parent_id, geom, disabled, count_k, modified, cmnt, mwm_size_est
           FROM {backup_table}
           WHERE backup = %s
         """, (ts,)
@@ -1141,7 +1142,11 @@ def bbox_contains(outer, inner):
 
 @app.route('/import', methods=['POST'])
 def import_osm():
+    # Though this variable is not used it's necessary to consume request.data
+    # so that nginx doesn't produce error like "#[error] 13#13: *65 readv()
+    # failed (104: Connection reset by peer) while reading upstream"
     data = request.data
+
     if config.READONLY:
         abort(405)
     if not LXML:
@@ -1317,6 +1322,8 @@ def import_osm():
             exc_type, exc_value, exc_traceback = sys.exc_info()
             traceback.print_exception(exc_type, exc_value, exc_traceback)
             return import_error('Database error. See server log for details')
+        except Exception as e:
+            return import_error(f'Import error: {str(e)}')
         if region_id < 0:
             added += 1
             if free_id is None:
@@ -1355,7 +1362,6 @@ def assign_region_to_lowerst_parent(region_id):
 def create_or_update_region(region, free_id):
     cursor = g.conn.cursor()
     table = config.TABLE
-    osm_table = config.OSM_TABLE
     if region['id'] < 0:
         if not free_id:
             free_id = get_free_id()
@@ -1375,7 +1381,7 @@ def create_or_update_region(region, free_id):
         )
         rec = cursor.fetchone()
         if rec[0] == 0:
-            raise Exception("Can't find border ({region['id']}) for update")
+            raise Exception(f"Can't find border ({region['id']}) for update")
         cursor.execute(f"""
             UPDATE {table}
             SET disabled = %s,
@@ -1501,24 +1507,48 @@ def statistics():
         table = config.TABLE
     cur = g.conn.cursor()
     if group == 'total':
-        cur.execute('select count(1) from borders;')
+        cur.execute(f"SELECT count(1) FROM {table}")
         return jsonify(total=cur.fetchone()[0])
     elif group == 'sizes':
-        cur.execute("select name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)), (case when ST_Area(geography(geom)) = 'NaN' then 0 else ST_Area(geography(geom)) / 1000000 end) as area, disabled, (case when cmnt is null or cmnt = '' then false else true end) as cmnt from {};".format(table))
+        cur.execute(f"""
+            SELECT name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)),
+                (CASE
+                    WHEN ST_Area(geography(geom)) = 'NaN'::DOUBLE PRECISION THEN 0
+                    ELSE ST_Area(geography(geom)) / 1000000
+                 END) AS area,
+                 disabled,
+                 (CASE
+                     WHEN coalesce(cmnt, '') = '' THEN false
+                     ELSE true
+                  END) AS cmnt
+            FROM {table}""")
         result = []
         for res in cur:
             coord = json.loads(res[3])['coordinates']
-            result.append({ 'name': res[0], 'lat': coord[1], 'lon': coord[0], 'size': res[1], 'nodes': res[2], 'area': res[4], 'disabled': res[5], 'commented': res[6] })
+            result.append({'name': res[0], 'lat': coord[1], 'lon': coord[0],
+                           'size': res[1], 'nodes': res[2], 'area': res[4],
+                           'disabled': res[5], 'commented': res[6]})
         return jsonify(regions=result)
     elif group == 'topo':
-        cur.execute("select name, count(1), min(case when ST_Area(geography(g)) = 'NaN' then 0 else ST_Area(geography(g)) end) / 1000000, sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g))) from (select name, (ST_Dump(geom)).geom as g from {}) a group by name;".format(table))
+        cur.execute(f"""
+            SELECT name, count(1),
+                min(
+                    CASE
+                        WHEN ST_Area(geography(g)) = 'NaN'::DOUBLE PRECISION THEN 0
+                        ELSE ST_Area(geography(g))
+                    END
+                ) / 1000000,
+                sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g)))
+            FROM (SELECT name, (ST_Dump(geom)).geom AS g
+                  FROM {table}) a
+                  GROUP BY name""")
         result = []
         for res in cur:
             coord = json.loads(res[4])['coordinates']
-            result.append({ 'name': res[0], 'outer': res[1], 'min_area': res[2], 'inner': res[3], 'lon': coord[0], 'lat': coord[1] })
+            result.append({'name': res[0], 'outer': res[1], 'min_area': res[2],
+                           'inner': res[3], 'lon': coord[0], 'lat': coord[1]})
         return jsonify(regions=result)
     return jsonify(status='wrong group id')
-
 
 @app.route('/border')
 def border():

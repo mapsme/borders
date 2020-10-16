@@ -82,16 +82,13 @@ function getServerConfiguration() {
 			}
 			if( res.readonly ) {
 				$('#action_buttons').hide();
-				$('#import_link').hide();
 				$('#backups').hide();
 				config.READONLY = true;
 			}
 			if( !res.readonly && IMPORT_ENABLED ) {
-				$('#import_link').css('display', 'none');
 				$('#filefm').css('display', 'block');
 				$('#filefm').attr('action', getServer('import'));
 				var iframe = '<iframe name="import_frame" class="h_iframe" src="about:blank"></iframe>';
-			//	$('#filefm').after(iframe);
 			}
             size_bad = config.MWM_SIZE_THR = Math.round(parseInt(res.mwm_size_thr)/1024);
             size_good = Math.round(size_bad * 0.7 / 10) * 10;
