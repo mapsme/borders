@@ -1,6 +1,8 @@
 #!/usr/bin/python
-import psycopg2
 import glob
+
+import psycopg2
+
 
 def read_polygon(f):
 	"""Reads an array of coordinates with the final 'END' line."""
@@ -25,6 +27,7 @@ def read_polygon(f):
 	if coords[0] != coords[-1]:
 		coords.append(coords[0])
 	return '({})'.format(','.join(coords))
+
 
 def read_multipolygon(f):
 	"""Read the entire poly file and parse in into a WKT."""
@@ -53,6 +56,7 @@ def read_multipolygon(f):
 	else:
 		return "MULTIPOLYGON({})".format(','.join(polygons))
 
+
 def convert_poly(input_file, cur):
 	"""Reads a multipolygon from input_file and inserts it into borders table."""
 	with open(input_file, 'r') as f:
@@ -60,10 +64,11 @@ def convert_poly(input_file, cur):
 		wkt = read_multipolygon(f)
 	print '  ', name
 	try:
-		cur.execute('insert into borders (name, geom, modified) values (%s, ST_GeomFromText(%s), now())', (name, wkt))
+		cur.execute('INSERT INTO borders (name, geom, modified) VALUES (%s, ST_GeomFromText(%s), now())', (name, wkt))
 	except psycopg2.Error as e:
 		print wkt
 		raise e
+
 
 if __name__ == "__main__":
 	conn = psycopg2.connect('dbname=borders')

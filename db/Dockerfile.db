@@ -11,9 +11,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-psycopg2
 
-##git clone https://github.com/mapsme/borders.git mapsme_borders
-
-ARG PLANET_URL=http://download.geofabrik.de/europe/andorra-latest.osm.pbf
+ARG PLANET_URL=${PLANET_URL}
 
 ENV PLANET=planet-file
 

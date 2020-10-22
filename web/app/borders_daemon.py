@@ -1,9 +1,12 @@
 #!/usr/bin/python3
-import os, sys
-import time
 import logging
+import sys
+import time
+
 import psycopg2
+
 import config
+
 try:
     from daemon import runner
     HAS_DAEMON = True
@@ -25,13 +28,12 @@ CHECK_BORDERS_INTERVAL = 10
 no_count_queries = [
     f"""
         SELECT id, name
-        FROM
-          ( SELECT id, name,
+        FROM (
+            SELECT id, name,
             ST_Area(geography(geom))/1000000.0 area,
             ST_Area(geography(ST_Envelope(geom)))/1000000.0 env_area
             FROM {table}
-            WHERE {condition}
-          ) q
+            WHERE {condition}) q
         WHERE area != 'NaN'::double precision
             AND area <= env_area
             AND env_area < 5000000
@@ -121,7 +123,6 @@ def init_logger():
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     handler = logging.FileHandler(config.DAEMON_LOG_PATH)
-    #handler = logging.StreamHandler()
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     return logger

@@ -27,7 +27,9 @@ else
 	CONVERTED_PLANET=$PLANET
 fi
 
-$OSMFILTER $CONVERTED_PLANET --keep="boundary=administrative or ( place=city =town =hamlet =village =isolated_dwelling )" --out-o5m -o=$FILTERED_PLANET || exit 3
+$OSMFILTER $CONVERTED_PLANET\
+    --keep="boundary=administrative or ( place=city =town =hamlet =village =isolated_dwelling )"\
+    --out-o5m -o=$FILTERED_PLANET\
+    || exit 3
 
 chmod +r $FILTERED_PLANET
-

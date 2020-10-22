@@ -61,10 +61,10 @@ def _add_population_data(conn, subregions, need_cities):
     cursor = conn.cursor()
     subregion_ids = ','.join(str(x) for x in subregions.keys())
     cursor.execute(f"""
-        SELECT b.osm_id, p.name, COALESCE(p.population, 0), p.place
+        SELECT b.osm_id, p.name, coalesce(p.population, 0), p.place
         FROM {osm_table} b, {osm_places_table} p
         WHERE b.osm_id IN ({subregion_ids})
-            AND ST_CONTAINS(b.way, p.center)
+            AND ST_Contains(b.way, p.center)
         """
     )
     for subregion_id, place_name, place_population, place_type in cursor:
@@ -116,10 +116,10 @@ def update_border_mwm_size_estimation(conn, border_id):
         'hamlet_cnt': 0
     }
     cursor.execute(f"""
-        SELECT COALESCE(p.population, 0), p.place
+        SELECT coalesce(p.population, 0), p.place
         FROM {table} b, {config.OSM_PLACES_TABLE} p
         WHERE b.id = %s
-            AND ST_CONTAINS(b.geom, p.center)
+            AND ST_Contains(b.geom, p.center)
         """, (border_id, ))
     for place_population, place_type in cursor:
         if place_type in ('city', 'town'):

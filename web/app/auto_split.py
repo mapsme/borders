@@ -1,8 +1,8 @@
 import itertools
 import json
-import psycopg2
-
 from collections import defaultdict
+
+import psycopg2
 
 from config import (
         AUTOSPLIT_TABLE as autosplit_table,
@@ -34,7 +34,7 @@ class DisjointClusterUnion:
             }
 
     def get_smallest_cluster(self):
-        """Find minimal cluster without big cities."""
+        """Find minimal cluster."""
         smallest_cluster_id = min(
             filter(
                 lambda cluster_id:
@@ -140,9 +140,9 @@ def calculate_common_border_matrix(conn, subregion_ids):
         SELECT b1.osm_id AS osm_id1, b2.osm_id AS osm_id2,
                ST_Length(geography(ST_Intersection(b1.way, b2.way))) AS intersection
         FROM {osm_table} b1, {osm_table} b2
-        WHERE b1.osm_id IN ({subregion_ids_str}) AND
-              b2.osm_id IN ({subregion_ids_str})
-              AND b1.osm_id < b2.osm_id
+        WHERE b1.osm_id IN ({subregion_ids_str})
+          AND b2.osm_id IN ({subregion_ids_str})
+          AND b1.osm_id < b2.osm_id
         """
     )
     common_border_matrix = {}  # {subregion_id: { subregion_id: float} } where len > 0
@@ -258,16 +258,16 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
         #subregion_ids_array_str = f"{{','.join(str(x) for x in subregion_ids)}}"
         cluster_geometry_sql = get_union_sql(subregion_ids)
         cursor.execute(f"""
-          INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
-                                         mwm_size_thr, mwm_size_est)
-          VALUES (
-            {dcu.region_id},
-            '{{{','.join(str(x) for x in subregion_ids)}}}',
-            ({cluster_geometry_sql}),
-            {dcu.mwm_size_thr},
-            {data['mwm_size_est']}
-          )
-        """)
+            INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
+                                           mwm_size_thr, mwm_size_est)
+              VALUES (
+                {dcu.region_id},
+                '{{{','.join(str(x) for x in subregion_ids)}}}',
+                ({cluster_geometry_sql}),
+                {dcu.mwm_size_thr},
+                {data['mwm_size_est']}
+              )
+            """)
     conn.commit()
 
 
@@ -275,11 +275,11 @@ def get_region_and_country_names(conn, region_id):
     cursor = conn.cursor()
     try:
      cursor.execute(
-      f"""SELECT name,
-          (SELECT name
-           FROM {osm_table}
-           WHERE admin_level = 2 AND ST_contains(way, b1.way)
-          ) AS country_name
+      f"""SELECT  name,
+                  (SELECT name
+                   FROM {osm_table}
+                   WHERE admin_level = 2 AND ST_Contains(way, b1.way)
+                  ) AS country_name
           FROM osm_borders b1
           WHERE osm_id = {region_id}
             AND b1.osm_id NOT IN (-9086712)  -- crunch, stub to exclude incorrect subregions

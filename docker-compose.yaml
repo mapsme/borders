@@ -21,8 +21,8 @@ services:
       context: ./db
       dockerfile: Dockerfile.db
       args:
-        PLANET_URL_full: https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf
-        PLANET_URL: http://download.geofabrik.de/africa/eritrea-latest.osm.pbf
+        PLANET_URL: https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf
+        PLANET_URL_small: http://download.geofabrik.de/africa/eritrea-latest.osm.pbf
     container_name: db
     restart: always
     environment:

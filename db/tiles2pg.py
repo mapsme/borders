@@ -21,15 +21,10 @@ with psycopg2.connect(f'dbname={options.database}') as conn:
                 (count, lat, lon) = (int(m.group(1)), float(m.group(2))/100, float(m.group(3))/100)
                 cur.execute(f'''
                     INSERT INTO {options.table} (count, tile) 
-                        VALUES (
-                                 %s,
-                                 ST_SetSRID(
-                                             ST_MakeBox2d(
-                                                           ST_Point(%s, %s),
-                                                           ST_Point(%s, %s)
-                                                         ),
-                                             4326
-                                           )
+                        VALUES (%s,
+                                ST_SetSRID(ST_MakeBox2d(ST_Point(%s, %s),
+                                                        ST_Point(%s, %s)),
+                                           4326)
                                )
                     ''', (count, lon, lat, lon + 0.01, lat + 0.01)
                 )

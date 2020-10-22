@@ -38,7 +38,8 @@ node,way population  text linear
 EOSTYLE
 fi
 
-$OSM2PGSQL --slim --drop --hstore --style $OSM2PGSQL_STYLE -d $DATABASE -r o5m $OSM2PGSQL_KEYS $FILTERED_PLANET
+$OSM2PGSQL --slim --drop --hstore --style $OSM2PGSQL_STYLE -d $DATABASE \
+           -r o5m $OSM2PGSQL_KEYS $FILTERED_PLANET
 RET=$?
 rm -f $FILTERED_PLANET
 if [ "$OSM2PGSQL_STYLE_TMP" == "1" ]; then
@@ -52,17 +53,16 @@ echo Creating osm_borders table
 psql $DATABASE -c "
 DROP TABLE IF EXISTS osm_borders;
 CREATE TABLE osm_borders AS
-  SELECT
-    osm_id,
-    ST_Buffer(ST_Transform(ST_Collect(way),4326), 0) AS way,
-    admin_level::INT AS admin_level,
-    coalesce(max(\"name:en\"), max(name)) AS name
+  SELECT osm_id,
+         ST_Buffer(ST_Transform(ST_Collect(way),4326), 0) AS way,
+         admin_level::INT AS admin_level,
+         coalesce(max(\"name:en\"), max(name)) AS name
   FROM planet_osm_polygon
   WHERE boundary='administrative' AND osm_id < 0 AND admin_level IN ('2', '3', '4', '5', '6', '7')
   GROUP BY osm_id, admin_level
   HAVING coalesce(max(\"name:en\"), max(name)) IS NOT NULL;
-  ALTER TABLE osm_borders ADD PRIMARY KEY (osm_id); 
-;" || exit 3
+ALTER TABLE osm_borders ADD PRIMARY KEY (osm_id);
+" || exit 3
 
 # Copy it to the borders database
 echo Copying osm_borders table to the borders database
