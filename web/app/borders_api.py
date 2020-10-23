@@ -505,10 +505,11 @@ def is_administrative_region(region_id):
     osm_table = config.OSM_TABLE
     cur = g.conn.cursor()
     cur.execute(f"""
-        SELECT osm_id FROM {osm_table} WHERE osm_id = %s
+        SELECT count(1) FROM {osm_table} WHERE osm_id = %s
         """, (region_id,)
     )
-    return bool(cur.rowcount > 0)
+    count = cur.fetchone()[0]
+    return (count > 0)
 
 def find_osm_child_regions(region_id):
     cursor = g.conn.cursor()
@@ -529,13 +530,13 @@ def find_osm_child_regions(region_id):
 def is_leaf(region_id):
     cursor = g.conn.cursor()
     cursor.execute(f"""
-        SELECT 1
+        SELECT count(1)
         FROM {config.TABLE}
         WHERE parent_id = %s
-        LIMIT 1
         """, (region_id,)
     )
-    return cursor.rowcount == 0
+    count = cursor.fetchone()[0]
+    return (count == 0)
 
 def get_region_country(region_id):
     """Returns the uppermost predecessor of the region in the hierarchy,
@@ -605,16 +606,16 @@ def divide_preview():
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
-    is_admin = is_administrative_region(region_id)
+    is_admin_region = is_administrative_region(region_id)
     region_ids = [region_id]
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     if apply_to_similar:
-        if not is_admin:
+        if not is_admin_region:
             return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
         region_ids = get_similar_regions(region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
-        if not is_admin:
+        if not is_admin_region:
             return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
@@ -722,16 +723,16 @@ def divide():
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
-    is_admin = is_administrative_region(region_id)
+    is_admin_region = is_administrative_region(region_id)
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     region_ids = [region_id]
     if apply_to_similar:
-        if not is_admin:
+        if not is_admin_region:
             return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
         region_ids = get_similar_regions(region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
-        if not is_admin:
+        if not is_admin_region:
             return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
@@ -755,8 +756,8 @@ def divide_into_subregions_one(region_id, next_level):
     subregions = get_subregions_info(g.conn, region_id, table,
                                      next_level, need_cities=False)
     cursor = g.conn.cursor()
-    is_admin = is_administrative_region(region_id)
-    if is_admin:
+    is_admin_region = is_administrative_region(region_id)
+    if is_admin_region:
         for subregion_id, data in subregions.items():
             cursor.execute(f"""
                 INSERT INTO {table}
@@ -1093,11 +1094,22 @@ def josm_borders_along():
     xml = xml + '</osm>'
     return Response(xml, mimetype='application/x-osm+xml')
 
+
+XML_ATTR_ESCAPINGS = {
+    '&': '&amp;',
+    '>': '&gt;',
+    '<': '&lt;',
+    '\n': '&#10;',
+    '\r': '&#13;',
+    '\t': '&#9;',
+    '"': '&quot;'
+}
+
+
 def quoteattr(value):
-    value = value.replace('&', '&amp;').replace('>', '&gt;').replace('<', '&lt;')
-    value = value.replace('\n', '&#10;').replace('\r', '&#13;').replace('\t', '&#9;')
-    value = value.replace('"', '&quot;')
-    return '"{}"'.format(value)
+    for char, replacement in XML_ATTR_ESCAPINGS.items():
+        value = value.replace(char, replacement)
+    return f'"{value}"'
 
 def ring_hash(refs):
     #return json.dumps(refs)
@@ -1150,16 +1162,23 @@ def import_error(msg):
     else:
         return jsonify(status=msg)
 
-def extend_bbox(bbox, x, y=None):
-    if y is not None:
-        x = [x, y, x, y]
-    bbox[0] = min(bbox[0], x[0])
-    bbox[1] = min(bbox[1], x[1])
-    bbox[2] = max(bbox[2], x[2])
-    bbox[3] = max(bbox[3], x[3])
+def extend_bbox(bbox, *args):
+    """Extend bbox to include another bbox or point."""
+    assert len(args) in (1, 2)
+    if len(args) == 1:
+        another_bbox = args[0]
+    else:
+        another_bbox = [args[0], args[1], args[0], args[1]]
+    bbox[0] = min(bbox[0], another_bbox[0])
+    bbox[1] = min(bbox[1], another_bbox[1])
+    bbox[2] = max(bbox[2], another_bbox[2])
+    bbox[3] = max(bbox[3], another_bbox[3])
 
 def bbox_contains(outer, inner):
-    return outer[0] <= inner[0] and outer[1] <= inner[1] and outer[2] >= inner[2] and outer[3] >= inner[3]
+    return (outer[0] <= inner[0] and
+            outer[1] <= inner[1] and
+            outer[2] >= inner[2] and
+            outer[3] >= inner[3])
 
 @app.route('/import', methods=['POST'])
 def import_osm():
@@ -1563,10 +1582,10 @@ def statistics():
             GROUP BY name"""
         )
         result = []
-        for res in cur:
-            coord = json.loads(res[4])['coordinates']
-            result.append({'name': res[0], 'outer': res[1], 'min_area': res[2],
-                           'inner': res[3], 'lon': coord[0], 'lat': coord[1]})
+        for (name, outer, min_area, inner, coords) in cur:
+            coord = json.loads(coords)['coordinates']
+            result.append({'name': name, 'outer': outer, 'min_area': min_area,
+                           'inner': inner, 'lon': coord[0], 'lat': coord[1]})
         return jsonify(regions=result)
     return jsonify(status='wrong group id')
 
