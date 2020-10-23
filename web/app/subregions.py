@@ -1,3 +1,5 @@
+import math
+
 import config
 from mwm_size_predictor import MwmSizePredictor
 
@@ -105,12 +107,14 @@ def update_border_mwm_size_estimation(conn, border_id):
     table = config.TABLE
     cursor = conn.cursor()
     cursor.execute(f"""
-        SELECT ST_Area(geography(geom))/1.0E+6 area
+        SELECT name, ST_Area(geography(geom))/1.0E+6 area
         FROM {table}
         WHERE id = %s""", (border_id, ))
-    rec = cursor.fetchone()
+    name, area = cursor.fetchone()
+    if math.isnan(area):
+        raise Exception(f"Area is NaN for border '{name}' ({border_id})")
     border_data = {
-        'area': rec[0],
+        'area': area,
         'urban_pop': 0,
         'city_cnt': 0,
         'hamlet_cnt': 0

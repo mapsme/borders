@@ -136,7 +136,7 @@ unilevel_countries = {
             'Panama',
             'Papua New Guinea',
             'Peru', #  need split-merge
-            'Philippines',  # split at level 3 and merge or not merte
+            'Philippines',  # split at level 3 and merge or not merge
             'Qatar',
             'Romania', #  need split-merge
             'Rwanda',
@@ -331,8 +331,13 @@ def _make_country_structure(conn, country_osm_id):
                                              admin_level, regions)
             _create_regions(conn, subregion_ids, regions)
             prev_region_ids = subregion_ids
+    warning = None
     if len(regions) == 1:
-        update_border_mwm_size_estimation(conn, country_osm_id)
+        try:
+            update_border_mwm_size_estimation(conn, country_osm_id)
+        except Exception as e:
+            warning = str(e)
+    return warning
 
 
 def create_countries_initial_structure(conn):
@@ -348,9 +353,13 @@ def create_countries_initial_structure(conn):
         #    ({','.join(f"'{c}'" for c in country_initial_levels.keys())})
         #"""
     )
+    warnings = []
     for rec in cursor:
-        _make_country_structure(conn, rec[0])
+        warning = _make_country_structure(conn, rec[0])
+        if warning:
+            warnings.append(warning)
     conn.commit()
+    return warnings
 
 def get_osm_border_name_by_osm_id(conn, osm_id):
     cursor = conn.cursor()

@@ -298,11 +298,14 @@ def split():
             new_ids.append(free_id)
             counter += 1
             free_id -= 1
+        warnings = []
         for border_id in new_ids:
-            update_border_mwm_size_estimation(g.conn, border_id)
+            try:
+                update_border_mwm_size_estimation(g.conn, border_id)
+            except Exception as e:
+                warnings.append(str(e))
         g.conn.commit()
-
-    return jsonify(status='ok')
+    return jsonify(status='ok', warnings=warnings)
 
 @app.route('/join')
 def join_borders():
@@ -442,9 +445,13 @@ def copy_from_osm():
         """, (osm_id,)
     )
     assign_region_to_lowerst_parent(osm_id)
-    update_border_mwm_size_estimation(g.conn, osm_id)
+    warnings = []
+    try:
+        update_border_mwm_size_estimation(g.conn, osm_id)
+    except Exception as e:
+        warnings.append(str(e))
     g.conn.commit()
-    return jsonify(status='ok')
+    return jsonify(status='ok', warnings=warnings)
 
 @app.route('/rename')
 def set_name():
@@ -864,10 +871,14 @@ def chop_largest_or_farthest():
                 GROUP BY name, disabled)
             ) x"""
     )
+    warnings = []
     for border_id in (free_id1, free_id2):
-        update_border_mwm_size_estimation(g.conn, border_id)
+        try:
+            update_border_mwm_size_estimation(g.conn, border_id)
+        except Exception as e:
+            warnings.append(str(e))
     g.conn.commit()
-    return jsonify(status='ok')
+    return jsonify(status='ok', warnings=warnings)
 
 @app.route('/hull')
 def draw_hull():
@@ -1608,7 +1619,7 @@ def border():
 @app.route('/start_over')
 def start_over():
     try:
-        create_countries_initial_structure(g.conn)
+        warnings = create_countries_initial_structure(g.conn)
     except CountryStructureException as e:
         return jsonify(status=str(e))
 
@@ -1616,7 +1627,7 @@ def start_over():
     cursor = g.conn.cursor()
     cursor.execute(f"DELETE FROM {autosplit_table}")
     g.conn.commit()
-    return jsonify(status='ok')
+    return jsonify(status='ok', warnings=warnings[:10])
 
 
 if __name__ == '__main__':

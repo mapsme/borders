@@ -136,8 +136,11 @@ function makeAnswerHandler(on_ok_func) {
 	return function(answer) {
 		if (answer.status !== 'ok')
 			alert(answer.status);
-		else
+		else {
+		    if (answer.warnings && answer.warnings.length)
+		        alert(answer.warnings.join('\n'));
 			on_ok_func(answer);
+		}
 	};
 }
 
