@@ -60,6 +60,8 @@ def _get_subregions_basic_info(conn, region_id, region_table,
 
 
 def _add_population_data(conn, subregions, need_cities):
+    if not subregions:
+        return
     cursor = conn.cursor()
     subregion_ids = ','.join(str(x) for x in subregions.keys())
     cursor.execute(f"""

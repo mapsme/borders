@@ -1,8 +1,5 @@
 import itertools
-import json
 from collections import defaultdict
-
-import psycopg2
 
 from config import (
         AUTOSPLIT_TABLE as autosplit_table,
@@ -122,7 +119,7 @@ def get_best_cluster_to_join_with(small_cluster_id,
 def calculate_common_border_matrix(conn, subregion_ids):
     cursor = conn.cursor()
     subregion_ids_str = ','.join(str(x) for x in subregion_ids)
-    # ST_Intersection returns 0 if its parameter is a geometry other than
+    # ST_Length returns 0 if its parameter is a geometry other than
     # LINESTRING or MULTILINESTRING
     cursor.execute(f"""
         SELECT b1.osm_id AS osm_id1, b2.osm_id AS osm_id2,
@@ -145,15 +142,13 @@ def calculate_common_border_matrix(conn, subregion_ids):
     return common_border_matrix
 
 
-def find_golden_splitting(conn, border_id, next_level,
-                          country_region_name, mwm_size_thr):
+def find_golden_splitting(conn, border_id, next_level, mwm_size_thr):
     subregions = get_subregions_info(conn, border_id, osm_table,
                                      next_level, need_cities=True)
     if not subregions:
         return
 
     dcu = DisjointClusterUnion(border_id, subregions, mwm_size_thr)
-    #save_splitting_to_file(dcu, f'all_{country_region_name}')
     all_subregion_ids = dcu.get_all_subregion_ids()
     common_border_matrix = calculate_common_border_matrix(conn, all_subregion_ids)
 
@@ -189,55 +184,9 @@ def get_union_sql(subregion_ids):
             """
 
 
-def get_geojson(conn, union_sql):
-    cursor = conn.cursor()
-    cursor.execute(f"""SELECT ST_AsGeoJSON(({union_sql}))""")
-    rec = cursor.fetchone()
-    return rec[0]
-
-
-def write_polygons_to_poly(file, polygons, name_prefix):
-    pcounter = 1
-    for polygon in polygons:
-        outer = True
-        for ring in polygon:
-            inner_mark = '' if outer else '!'
-            name = pcounter if outer else -pcounter
-            file.write(f"{inner_mark}{name_prefix}_{name}\n")
-            pcounter = pcounter + 1
-            for coord in ring:
-                file.write('\t{:E}\t{:E}\n'.format(coord[0], coord[1]))
-            file.write('END\n')
-            outer = False
-
-
-def save_splitting_to_file(conn, dcu: DisjointClusterUnion, filename_prefix=None):
-    """May be used for debugging"""
-    GENERATE_ALL_POLY=False
-    FOLDER='split_results'
-    with open(f"{FOLDER}/{filename_prefix}.poly", 'w') as poly_file:
-        poly_file.write(f"{filename_prefix}\n")
-        for cluster_id, data in dcu.clusters.items():
-            subregion_ids = data['subregion_ids']
-            cluster_geometry_sql = get_union_sql(subregion_ids)
-            geojson = get_geojson(conn, cluster_geometry_sql)
-            geometry = json.loads(geojson)
-            polygons = [geometry['coordinates']] if geometry['type'] == 'Polygon' else geometry['coordinates']
-            name_prefix=f"{filename_prefix}_{abs(cluster_id)}"
-            write_polygons_to_poly(poly_file, polygons, name_prefix)
-            if GENERATE_ALL_POLY:
-                with open(f"{FOLDER}/{filename_prefix}{cluster_id}.poly", 'w') as f:
-                    f.write(f"{filename_prefix}_{cluster_id}")
-                    write_polygons_to_poly(f, polygons, name_prefix)
-                    f.write('END\n')
-        poly_file.write('END\n')
-    with open(f"{FOLDER}/{filename_prefix}-splitting.json", 'w') as f:
-        json.dump(dcu.clusters, f, ensure_ascii=False, indent=2)
-
-
 def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
     cursor = conn.cursor()
-    # remove previous splitting of the region
+    # Remove previous splitting of the region
     cursor.execute(f"""
         DELETE FROM {autosplit_table}
         WHERE osm_border_id = {dcu.region_id}
@@ -261,53 +210,12 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
     conn.commit()
 
 
-def get_region_and_country_names(conn, region_id):
-    cursor = conn.cursor()
-    try:
-        cursor.execute(f"""
-            SELECT  name,
-                    (SELECT name
-                     FROM {osm_table}
-                     WHERE admin_level = 2
-                       AND ST_Contains(way, b1.way)) AS country_name
-            FROM osm_borders b1
-            WHERE osm_id = {region_id}
-              AND b1.osm_id NOT IN (-9086712)  -- crunch, stub to exclude incorrect subregions
-            """
-        )
-        region_name, country_name = cursor.fetchone()
-    except psycopg2.errors.CardinalityViolation:
-        conn.rollback()
-        cursor.execute(f"""
-            SELECT name
-            FROM {osm_table} b1
-            WHERE osm_id = {region_id}
-            """
-        )
-        region_name = cursor.fetchone()[0]
-        country_name = None
-        print(f"Many countries for region '{region_name}' id={region_id}")
-    return region_name, country_name
-
-
-def split_region(conn, region_id, next_level,
-                 mwm_size_thr,
-                 save_to_files=False):
-    region_name, country_name = get_region_and_country_names(conn, region_id)
-    region_name = region_name.replace('/', '|')
-    country_region_name = f"{country_name}_{region_name}" if country_name else region_name
-    dcu = find_golden_splitting(conn, region_id, next_level,
-                                country_region_name, mwm_size_thr)
+def split_region(conn, region_id, next_level, mwm_size_thr):
+    dcu = find_golden_splitting(conn, region_id, next_level, mwm_size_thr)
     if dcu is None:
         return
-
-    save_splitting(conn, dcu, save_to_files, country_region_name)
-
-
-def save_splitting(conn, dcu: DisjointClusterUnion,
-                   save_to_files=None, country_region_name=None):
     save_splitting_to_db(conn, dcu)
-    if save_to_files:
-        print(f"Saving {country_region_name}")
-        filename_prefix = f"{country_region_name}-{dcu.city_population_thr}"
-        save_splitting_to_file(conn, dcu, filename_prefix)
+
+    ## May need to debug
+    #from auto_split_debug import save_splitting_to_file
+    #save_splitting_to_file(conn, dcu)

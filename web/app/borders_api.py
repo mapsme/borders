@@ -5,7 +5,6 @@ import re
 import sys, traceback
 import zipfile
 from unidecode import unidecode
-from queue import Queue
 
 from flask import (
         Flask, g,
@@ -24,6 +23,10 @@ from countries_structure import (
     CountryStructureException,
     create_countries_initial_structure,
     get_osm_border_name_by_osm_id,
+    get_region_country,
+    get_region_full_name,
+    get_similar_regions,
+    is_administrative_region,
 )
 from subregions import (
     get_subregions_info,
@@ -116,7 +119,7 @@ def fetch_borders(**kwargs):
     borders = []
     for rec in cur:
         region_id = rec[8]
-        country_id, country_name = get_region_country(region_id)
+        country_id, country_name = get_region_country(g.conn, region_id)
         props = { 'name': rec[0] or '', 'nodes': rec[2], 'modified': rec[3],
                   'disabled': rec[4], 'count_k': rec[5],
                   'comment': rec[6],
@@ -508,103 +511,6 @@ def update_comment():
     g.conn.commit()
     return jsonify(status='ok')
 
-def is_administrative_region(region_id):
-    osm_table = config.OSM_TABLE
-    cur = g.conn.cursor()
-    cur.execute(f"""
-        SELECT count(1) FROM {osm_table} WHERE osm_id = %s
-        """, (region_id,)
-    )
-    count = cur.fetchone()[0]
-    return (count > 0)
-
-def find_osm_child_regions(region_id):
-    cursor = g.conn.cursor()
-    table = config.TABLE
-    osm_table = config.OSM_TABLE
-    cursor.execute(f"""
-        SELECT c.id, oc.admin_level
-        FROM {table} c, {table} p, {osm_table} oc
-        WHERE p.id = c.parent_id AND c.id = oc.osm_id
-            AND p.id = %s
-        """, (region_id,)
-    )
-    children = []
-    for rec in cursor:
-        children.append({'id': int(rec[0]), 'admin_level': int(rec[1])})
-    return children
-
-def is_leaf(region_id):
-    cursor = g.conn.cursor()
-    cursor.execute(f"""
-        SELECT count(1)
-        FROM {config.TABLE}
-        WHERE parent_id = %s
-        """, (region_id,)
-    )
-    count = cursor.fetchone()[0]
-    return (count == 0)
-
-def get_region_country(region_id):
-    """Returns the uppermost predecessor of the region in the hierarchy,
-    possibly itself.
-    """
-    predecessors = get_predecessors(region_id)
-    return predecessors[-1]
-
-def get_predecessors(region_id):
-    """Returns the list of (id, name)-tuples of all predecessors,
-    starting from the very region_id.
-    """
-    predecessors = []
-    table = config.TABLE
-    cursor = g.conn.cursor()
-    while True:
-        cursor.execute(f"""
-            SELECT id, name, parent_id
-            FROM {table} WHERE id={region_id}
-            """
-        )
-        rec = cursor.fetchone()
-        if not rec:
-           raise Exception(f"No record in '{table}' table with id = {region_id}")
-        predecessors.append(rec[0:2])
-        parent_id = rec[2]
-        if not parent_id:
-            break
-        region_id = parent_id
-    return predecessors
-
-def get_region_full_name(region_id):
-    predecessors = get_predecessors(region_id)
-    return '_'.join(pr[1] for pr in reversed(predecessors))
-
-def get_similar_regions(region_id, only_leaves=False):
-    """Returns ids of regions of the same admin_level in the same country.
-    Prerequisite: is_administrative_region(region_id) is True.
-    """
-    cursor = g.conn.cursor()
-    cursor.execute(f"""
-        SELECT admin_level FROM {config.OSM_TABLE}
-        WHERE osm_id = %s""", (region_id,)
-    )
-    admin_level = int(cursor.fetchone()[0])
-    country_id, country_name = get_region_country(region_id)
-    q = Queue()
-    q.put({'id': country_id, 'admin_level': 2})
-    similar_region_ids = []
-    while not q.empty():
-        item = q.get()
-        if item['admin_level'] == admin_level:
-            similar_region_ids.append(item['id'])
-        elif item['admin_level'] < admin_level:
-            children = find_osm_child_regions(item['id'])
-            for ch in children:
-                q.put(ch)
-    if only_leaves:
-        similar_region_ids = [r_id for r_id in similar_region_ids
-                                  if is_leaf(r_id)]
-    return similar_region_ids
 
 @app.route('/divpreview')
 def divide_preview():
@@ -613,13 +519,13 @@ def divide_preview():
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
-    is_admin_region = is_administrative_region(region_id)
+    is_admin_region = is_administrative_region(g.conn, region_id)
     region_ids = [region_id]
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     if apply_to_similar:
         if not is_admin_region:
             return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
-        region_ids = get_similar_regions(region_id, only_leaves=True)
+        region_ids = get_similar_regions(g.conn, region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
         if not is_admin_region:
@@ -730,13 +636,13 @@ def divide():
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
-    is_admin_region = is_administrative_region(region_id)
+    is_admin_region = is_administrative_region(g.conn, region_id)
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     region_ids = [region_id]
     if apply_to_similar:
         if not is_admin_region:
             return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
-        region_ids = get_similar_regions(region_id, only_leaves=True)
+        region_ids = get_similar_regions(g.conn, region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
         if not is_admin_region:
@@ -763,7 +669,7 @@ def divide_into_subregions_one(region_id, next_level):
     subregions = get_subregions_info(g.conn, region_id, table,
                                      next_level, need_cities=False)
     cursor = g.conn.cursor()
-    is_admin_region = is_administrative_region(region_id)
+    is_admin_region = is_administrative_region(g.conn, region_id)
     if is_admin_region:
         for subregion_id, data in subregions.items():
             cursor.execute(f"""
@@ -1520,7 +1426,7 @@ def export_poly():
                         else geometry['coordinates'])
             # sanitize name, src: http://stackoverflow.com/a/295466/1297601
             name = border['properties']['name'] or str(-border['properties']['id'])
-            fullname = get_region_full_name(border['properties']['id'])
+            fullname = get_region_full_name(g.conn, border['properties']['id'])
             filename = unidecode(fullname)
             filename = re.sub('[^\w _-]', '', filename).strip()
             filename = filename + '.poly'
