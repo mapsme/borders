@@ -28,6 +28,11 @@ from countries_structure import (
     get_similar_regions,
     is_administrative_region,
 )
+from osm_xml import (
+    borders_from_xml,
+    borders_to_xml,
+    lines_to_xml,
+)
 from subregions import (
     get_subregions_info,
     update_border_mwm_size_estimation,
@@ -896,82 +901,22 @@ def make_osm():
         where_clause=f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
                                           f"ST_Point({xmax}, {ymax}))"
     )
-    node_pool = {'id': 1} # 'lat_lon': id
-    regions = [] # { id: id, name: name, rings: [['outer', [ids]], ['inner', [ids]], ...] }
-    for border in borders:
-        geometry = border['geometry'] #json.loads(rec[2])
-        rings = []
-        if geometry['type'] == 'Polygon':
-            parse_polygon(node_pool, rings, geometry['coordinates'])
-        elif geometry['type'] == 'MultiPolygon':
-            for polygon in geometry['coordinates']:
-                parse_polygon(node_pool, rings, polygon)
-        if len(rings) > 0:
-            regions.append({
-                'id': abs(border['properties']['id']),
-                'name': border['properties']['name'],
-                'disabled': border['properties']['disabled'],
-                'rings': rings
-            })
-
-    xml = '<?xml version="1.0" encoding="UTF-8"?><osm version="0.6" upload="false">'
-    for latlon, node_id in node_pool.items():
-        if latlon != 'id':
-            (lat, lon) = latlon.split()
-            xml = xml + '<node id="{id}" visible="true" version="1" lat="{lat}" lon="{lon}" />'.format(id=node_id, lat=lat, lon=lon)
-
-    ways = {} # json: id
-    wrid = 1
-    for region in regions:
-        w1key = ring_hash(region['rings'][0][1])
-        if not config.JOSM_FORCE_MULTI and len(region['rings']) == 1 and w1key not in ways:
-            # simple case: a way
-            ways[w1key] = region['id']
-            xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=region['id'])
-            xml = xml + '<tag k="name" v={} />'.format(quoteattr(region['name']))
-            if region['disabled']:
-                xml = xml + '<tag k="disabled" v="yes" />'
-            for nd in region['rings'][0][1]:
-                xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
-            xml = xml + '</way>'
-        else:
-            # multipolygon
-            rxml = '<relation id="{id}" visible="true" version="1">'.format(id=region['id'])
-            wrid = wrid + 1
-            rxml = rxml + '<tag k="type" v="multipolygon" />'
-            rxml = rxml + '<tag k="name" v={} />'.format(quoteattr(region['name']))
-            if region['disabled']:
-                rxml = rxml + '<tag k="disabled" v="yes" />'
-            for ring in region['rings']:
-                wkey = ring_hash(ring[1])
-                if wkey in ways:
-                    # already have that way
-                    rxml = rxml + '<member type="way" ref="{ref}" role="{role}" />'.format(ref=ways[wkey], role=ring[0])
-                else:
-                    ways[wkey] = wrid
-                    xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
-                    rxml = rxml + '<member type="way" ref="{ref}" role="{role}" />'.format(ref=wrid, role=ring[0])
-                    for nd in ring[1]:
-                        xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
-                    xml = xml + '</way>'
-                    wrid = wrid + 1
-            xml = xml + rxml + '</relation>'
-    xml = xml + '</osm>'
+    xml = borders_to_xml(borders)
     return Response(xml, mimetype='application/x-osm+xml')
 
 @app.route('/josmbord')
 def josm_borders_along():
-    name = request.args.get('name')
+    region_id = int(request.args.get('id'))
     line = request.args.get('line')
-    cur = g.conn.cursor()
+    cursor = g.conn.cursor()
     # select all outer osm borders inside a buffer of the given line
     table = config.TABLE
     osm_table = config.OSM_TABLE
-    cur.execute(f"""
+    cursor.execute(f"""
         WITH linestr AS (
             SELECT ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)) as line
             FROM {table}
-            WHERE name = %s
+            WHERE id = %s
         ), osmborders AS (
             SELECT (ST_Dump(way)).geom as g
             FROM {osm_table}, linestr
@@ -980,122 +925,18 @@ def josm_borders_along():
         SELECT ST_AsGeoJSON((ST_Dump(ST_LineMerge(ST_Intersection(ST_Collect(ST_ExteriorRing(g)), line)))).geom)
         FROM osmborders, linestr
         GROUP BY line
-        """, (line, name)
+        """, (line, region_id)
     )
-    node_pool = { 'id': 1 } # 'lat_lon': id
-    lines = []
-    for rec in cur:
-        geometry = json.loads(rec[0])
-        if geometry['type'] == 'LineString':
-            nodes = parse_linestring(node_pool, geometry['coordinates'])
-        elif geometry['type'] == 'MultiLineString':
-            nodes = []
-            for line in geometry['coordinates']:
-                nodes.extend(parse_linestring(node_pool, line))
-        if len(nodes) > 0:
-            lines.append(nodes)
-
-    xml = '<?xml version="1.0" encoding="UTF-8"?><osm version="0.6" upload="false">'
-    for latlon, node_id in node_pool.items():
-        if latlon != 'id':
-            (lat, lon) = latlon.split()
-            xml = xml + '<node id="{id}" visible="true" version="1" lat="{lat}" lon="{lon}" />'.format(id=node_id, lat=lat, lon=lon)
-
-    wrid = 1
-    for line in lines:
-        xml = xml + '<way id="{id}" visible="true" version="1">'.format(id=wrid)
-        for nd in line:
-            xml = xml + '<nd ref="{ref}" />'.format(ref=nd)
-        xml = xml + '</way>'
-        wrid = wrid + 1
-    xml = xml + '</osm>'
+    xml = lines_to_xml(rec[0] for rec in cursor)
     return Response(xml, mimetype='application/x-osm+xml')
 
 
-XML_ATTR_ESCAPINGS = {
-    '&': '&amp;',
-    '>': '&gt;',
-    '<': '&lt;',
-    '\n': '&#10;',
-    '\r': '&#13;',
-    '\t': '&#9;',
-    '"': '&quot;'
-}
-
-
-def quoteattr(value):
-    for char, replacement in XML_ATTR_ESCAPINGS.items():
-        value = value.replace(char, replacement)
-    return f'"{value}"'
-
-def ring_hash(refs):
-    #return json.dumps(refs)
-    return hash(tuple(sorted(refs)))
-
-def parse_polygon(node_pool, rings, polygon):
-    role = 'outer'
-    for ring in polygon:
-        rings.append([role, parse_linestring(node_pool, ring)])
-        role = 'inner'
-
-def parse_linestring(node_pool, linestring):
-    nodes = []
-    for lonlat in linestring:
-        ref = '{} {}'.format(lonlat[1], lonlat[0])
-        if ref in node_pool:
-            node_id = node_pool[ref]
-        else:
-            node_id = node_pool['id']
-            node_pool[ref] = node_id
-            node_pool['id'] = node_id + 1
-        nodes.append(node_id)
-    return nodes
-
-def append_way(way, way2):
-    another = list(way2) # make copy to not modify original list
-    if way[0] == way[-1] or another[0] == another[-1]:
-        return None
-    if way[0] == another[0] or way[-1] == another[-1]:
-        another.reverse()
-    if way[-1] == another[0]:
-        result = list(way)
-        result.extend(another[1:])
-        return result
-    elif way[0] == another[-1]:
-        result = another
-        result.extend(way)
-        return result
-    return None
-
-def way_to_wkt(node_pool, refs):
-    coords = []
-    for nd in refs:
-        coords.append('{} {}'.format(node_pool[nd]['lon'], node_pool[nd]['lat']))
-    return '({})'.format(','.join(coords))
-
 def import_error(msg):
     if config.IMPORT_ERROR_ALERT:
-        return '<script>alert("{}");</script>'.format(msg)
+        return f'<script>alert("{msg}");</script>'
     else:
         return jsonify(status=msg)
 
-def extend_bbox(bbox, *args):
-    """Extend bbox to include another bbox or point."""
-    assert len(args) in (1, 2)
-    if len(args) == 1:
-        another_bbox = args[0]
-    else:
-        another_bbox = [args[0], args[1], args[0], args[1]]
-    bbox[0] = min(bbox[0], another_bbox[0])
-    bbox[1] = min(bbox[1], another_bbox[1])
-    bbox[2] = max(bbox[2], another_bbox[2])
-    bbox[3] = max(bbox[3], another_bbox[3])
-
-def bbox_contains(outer, inner):
-    return (outer[0] <= inner[0] and
-            outer[1] <= inner[1] and
-            outer[2] >= inner[2] and
-            outer[3] >= inner[3])
 
 @app.route('/import', methods=['POST'])
 def import_osm():
@@ -1117,157 +958,11 @@ def import_osm():
         return import_error("malformed xml document")
     if not tree:
         return import_error("bad document")
-    root = tree.getroot()
 
-    # read nodes and ways
-    nodes = {} # id: { lat, lon, modified }
-    for node in root.iter('node'):
-        if node.get('action') == 'delete':
-            continue
-        modified = int(node.get('id')) < 0 or node.get('action') == 'modify'
-        nodes[node.get('id')] = {'lat': float(node.get('lat')),
-                                 'lon': float(node.get('lon')),
-                                 'modified': modified }
-    ways = {} # id: { name, disabled, modified, bbox, nodes, used }
-    for way in root.iter('way'):
-        if way.get('action') == 'delete':
-            continue
-        way_nodes = []
-        bbox = [1e4, 1e4, -1e4, -1e4]
-        modified = int(way.get('id')) < 0 or way.get('action') == 'modify'
-        for node in way.iter('nd'):
-            ref = node.get('ref')
-            if not ref in nodes:
-                return import_error("missing node {} in way {}".format(ref, way.get('id')))
-            way_nodes.append(ref)
-            if nodes[ref]['modified']:
-                modified = True
-            extend_bbox(bbox, float(nodes[ref]['lon']), float(nodes[ref]['lat']))
-        name = None
-        disabled = False
-        for tag in way.iter('tag'):
-            if tag.get('k') == 'name':
-                name = tag.get('v')
-            if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
-                disabled = True
-        if len(way_nodes) < 2:
-            return import_error("way with less than 2 nodes: {}".format(way.get('id')))
-        ways[way.get('id')] = {'name': name, 'disabled': disabled,
-                               'modified': modified, 'bbox': bbox,
-                               'nodes': way_nodes, 'used': False}
-
-    # finally we are constructing regions: first, from multipolygons
-    regions = {} # /*name*/ id: { modified, disabled, wkt, type: 'r'|'w' }
-    for rel in root.iter('relation'):
-        if rel.get('action') == 'delete':
-            continue
-        osm_id = int(rel.get('id'))
-        modified = osm_id < 0 or rel.get('action') == 'modify'
-        name = None
-        disabled = False
-        multi = False
-        inner = []
-        outer = []
-        for tag in rel.iter('tag'):
-            if tag.get('k') == 'name':
-                name = tag.get('v')
-            if tag.get('k') == 'disabled' and tag.get('v') == 'yes':
-                disabled = True
-            if tag.get('k') == 'type' and tag.get('v') == 'multipolygon':
-                multi = True
-        if not multi:
-            return import_error("found non-multipolygon relation: {}".format(rel.get('id')))
-        #if not name:
-        #    return import_error('relation {} has no name'.format(rel.get('id')))
-        #if name in regions:
-        #    return import_error('multiple relations with the same name {}'.format(name))
-        for member in rel.iter('member'):
-            ref = member.get('ref')
-            if not ref in ways:
-                return import_error("missing way {} in relation {}".format(ref, rel.get('id')))
-            if ways[ref]['modified']:
-                modified = True
-            role = member.get('role')
-            if role == 'outer':
-                outer.append(ways[ref])
-            elif role == 'inner':
-                inner.append(ways[ref])
-            else:
-                return import_error("unknown role {} in relation {}".format(role, rel.get('id')))
-            ways[ref]['used'] = True
-        # after parsing ways, so 'used' flag is set
-        if rel.get('action') == 'delete':
-            continue
-        if len(outer) == 0:
-            return import_error("relation {} has no outer ways".format(rel.get('id')))
-        # reconstruct rings in multipolygon
-        for multi in (inner, outer):
-            i = 0
-            while i < len(multi):
-                way = multi[i]['nodes']
-                while way[0] != way[-1]:
-                    productive = False
-                    j = i + 1
-                    while way[0] != way[-1] and j < len(multi):
-                        new_way = append_way(way, multi[j]['nodes'])
-                        if new_way:
-                            multi[i] = dict(multi[i])
-                            multi[i]['nodes'] = new_way
-                            way = new_way
-                            if multi[j]['modified']:
-                                multi[i]['modified'] = True
-                            extend_bbox(multi[i]['bbox'], multi[j]['bbox'])
-                            del multi[j]
-                            productive = True
-                        else:
-                            j = j + 1
-                    if not productive:
-                        return import_error("unconnected way in relation {}".format(rel.get('id')))
-                i = i + 1
-        # check for 2-node rings
-        for multi in (outer, inner):
-            for way in multi:
-                if len(way['nodes']) < 3:
-                    return import_error("Way in relation {} has only {} nodes".format(rel.get('id'), len(way['nodes'])))
-        # sort inner and outer rings
-        polygons = []
-        for way in outer:
-            rings = [way_to_wkt(nodes, way['nodes'])]
-            for i in range(len(inner)-1, -1, -1):
-                if bbox_contains(way['bbox'], inner[i]['bbox']):
-                    rings.append(way_to_wkt(nodes, inner[i]['nodes']))
-                    del inner[i]
-            polygons.append('({})'.format(','.join(rings)))
-        regions[osm_id] = {
-                'id': osm_id,
-                'type': 'r',
-                'name': name,
-                'modified': modified,
-                'disabled': disabled,
-                'wkt': 'MULTIPOLYGON({})'.format(','.join(polygons))
-        }
-
-    # make regions from unused named ways
-    for wid, w in ways.items():
-        if w['used']:
-            continue
-        if not w['name']:
-            #continue
-            return import_error("unused in multipolygon way with no name: {}".format(wid))
-        if w['nodes'][0] != w['nodes'][-1]:
-            return import_error("non-closed unused in multipolygon way: {}".format(wid))
-        if len(w['nodes']) < 3:
-            return import_error("way {} has {} nodes".format(wid, len(w['nodes'])))
-        #if w['name'] in regions:
-        #    return import_error('way {} has the same name as other way/multipolygon'.format(wid))
-        regions[wid] = {
-                'id': int(wid),
-                'type': 'w',
-                'name': w['name'],
-                'modified': w['modified'],
-                'disabled': w['disabled'],
-                'wkt': 'POLYGON({})'.format(way_to_wkt(nodes, w['nodes']))
-        }
+    result = borders_from_xml(tree)
+    if type(result) == 'str':
+        return import_error(result)
+    regions = result
 
     # submit modifications to the database
     cur = g.conn.cursor()

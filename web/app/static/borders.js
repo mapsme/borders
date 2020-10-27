@@ -720,7 +720,7 @@ function bSplitJosm() {
 		wkt += L.Util.formatNum(lls[i].lng, 6) + ' ' + L.Util.formatNum(lls[i].lat, 6);
 	}
 	importInJOSM('josmbord', {
-		'name': splitSelected,
+		'id': splitSelected,
 		'line': 'LINESTRING(' + wkt + ')'
 	});
 }
