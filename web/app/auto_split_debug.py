@@ -5,7 +5,7 @@ from auto_split import (
     DisjointClusterUnion,
     get_union_sql,
 )
-from countries_structure import (
+from subregions import (
     get_region_full_name,
 )
 
