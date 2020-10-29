@@ -961,7 +961,7 @@ function bDividePreview() {
     if (auto_divide) {
         params['mwm_size_thr'] = parseInt($('#mwm_size_thr').val()) * 1024;
     }
-	$.ajax(getServer('divpreview'), {
+	$.ajax(getServer('divide_preview'), {
 		data: params,
 		success: makeAnswerHandler(bDivideDrawPreview)
 	});

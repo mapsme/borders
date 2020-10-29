@@ -440,47 +440,28 @@ def update_comment():
     return jsonify(status='ok')
 
 
-@app.route('/divpreview')
+@app.route('/divide_preview')
 def divide_preview():
-    region_id = int(request.args.get('id'))
-    try:
-        next_level = int(request.args.get('next_level'))
-    except ValueError:
-        return jsonify(status="Not a number in next level")
-    is_admin_region = is_administrative_region(g.conn, region_id)
-    region_ids = [region_id]
-    apply_to_similar = (request.args.get('apply_to_similar') == 'true')
-    if apply_to_similar:
-        if not is_admin_region:
-            return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
-        region_ids = get_similar_regions(g.conn, region_id, only_leaves=True)
-    auto_divide = (request.args.get('auto_divide') == 'true')
-    if auto_divide:
-        if not is_admin_region:
-            return jsonify(status="Could not apply auto-division to non-administrative regions")
-        try:
-            mwm_size_thr = int(request.args.get('mwm_size_thr'))
-        except ValueError:
-            return jsonify(status="Not a number in thresholds")
-        return divide_into_clusters_preview(
-                region_ids, next_level,
-                mwm_size_thr)
-    else:
-        return divide_into_subregions_preview(region_ids, next_level)
+    return divide(preview=True)
 
 
 @app.route('/divide')
-def divide():
-    if config.READONLY:
-        abort(405)
+def divide_do():
+    return divide(preview=False)
+
+
+def divide(preview=False):
+    if not preview:
+        if config.READONLY:
+            abort(405)
     region_id = int(request.args.get('id'))
     try:
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
     is_admin_region = is_administrative_region(g.conn, region_id)
-    apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     region_ids = [region_id]
+    apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     if apply_to_similar:
         if not is_admin_region:
             return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
@@ -493,11 +474,19 @@ def divide():
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
             return jsonify(status="Not a number in thresholds")
-        return divide_into_clusters(
+        divide_into_clusters_func = (
+            divide_into_clusters_preview if preview else
+            divide_into_clusters
+        )
+        return divide_into_clusters_func(
                 region_ids, next_level,
                 mwm_size_thr)
     else:
-        return divide_into_subregions(region_ids, next_level)
+        divide_into_subregions_func = (
+            divide_into_subregions_preview if preview else
+            divide_into_subregions
+        )
+        return divide_into_subregions_func(region_ids, next_level)
 
 
 @app.route('/chop1')
