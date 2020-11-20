@@ -381,7 +381,7 @@ function doSearch() {
 	if( query.length > 1 ) {
 		$.ajax(getServer('search'), {
 			data: { 'q': query },
-			success: zoomToFound
+			success: makeAnswerHandler(zoomToFound)
 		});
 	}
 }

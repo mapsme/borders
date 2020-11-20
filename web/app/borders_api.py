@@ -183,7 +183,7 @@ def search():
     )
     if cur.rowcount > 0:
         rec = cur.fetchone()
-        return jsonify(bounds=[rec[0], rec[1], rec[2], rec[3]])
+        return jsonify(status='ok', bounds=rec)
     return jsonify(status='not found')
 
 
