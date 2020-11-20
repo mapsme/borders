@@ -1,8 +1,9 @@
-#!/usr/bin/python3.6
+#!/usr/bin/python3
 import io
 import re
 import sys, traceback
 import zipfile
+from functools import wraps
 from unidecode import unidecode
 
 from flask import (
@@ -43,11 +44,48 @@ try:
 except:
     LXML = False
 
+
 app = Flask(__name__)
-app.debug=config.DEBUG
+app.debug = config.DEBUG
 Compress(app)
 CORS(app)
 app.config['JSON_AS_ASCII'] = False
+
+
+def validate_args_types(**expected_types):
+    """This decorator does early server method termination
+    if some args from request.args cannot be converted into expected types.
+
+    expected_types example: id=int, size=float, parent_id=(None, int)
+    Only one type or tuple of the form (None, some_type) is allowed.
+    """
+    def f_with_validation(f):
+        @wraps(f)
+        def inner(*args, **kwargs):
+            args_ok = True
+            for arg, arg_type in expected_types.items():
+                if isinstance(arg_type, tuple):
+                    assert len(arg_type) == 2 and arg_type[0] is None
+                    arg_type = arg_type[1]
+                    allow_None = True
+                else:
+                    assert arg_type is not None
+                    allow_None = False
+
+                arg_value = request.args.get(arg)
+                if allow_None and arg_value is None:
+                    continue
+                try:
+                    arg_type(arg_value)
+                except (TypeError, ValueError):
+                    args_ok = False
+                    break
+            if not args_ok:
+                return abort(400)
+            return f(*args, **kwargs)
+        return inner
+
+    return f_with_validation
 
 
 @app.route('/static/<path:path>')
@@ -81,11 +119,12 @@ def stat():
 
 
 @app.route('/bbox')
+@validate_args_types(xmin=float, xmax=float, ymin=float, ymax=float)
 def query_bbox():
-    xmin = float(request.args.get('xmin'))
-    xmax = float(request.args.get('xmax'))
-    ymin = float(request.args.get('ymin'))
-    ymax = float(request.args.get('ymax'))
+    xmin = request.args.get('xmin')
+    xmax = request.args.get('xmax')
+    ymin = request.args.get('ymin')
+    ymax = request.args.get('ymax')
     simplify_level = request.args.get('simplify')
     simplify = simplify_level_to_postgis_value(simplify_level)
     table = request.args.get('table')
@@ -106,6 +145,7 @@ def query_bbox():
 
 
 @app.route('/small')
+@validate_args_types(xmin=float, xmax=float, ymin=float, ymax=float)
 def query_small_in_bbox():
     xmin = request.args.get('xmin')
     xmax = request.args.get('xmax')
@@ -188,6 +228,7 @@ def search():
 
 
 @app.route('/split')
+@validate_args_types(id=int)
 def split():
     if config.READONLY:
         abort(405)
@@ -249,6 +290,7 @@ def split():
 
 
 @app.route('/join')
+@validate_args_types(id1=int, id2=int)
 def join_borders():
     if config.READONLY:
         abort(405)
@@ -278,6 +320,7 @@ def join_borders():
 
 
 @app.route('/join_to_parent')
+@validate_args_types(id=int)
 def join_to_parent():
     """Find all descendants of a region and remove them starting
     from the lowest hierarchical level to not violate 'parent_id'
@@ -310,6 +353,7 @@ def join_to_parent():
 
 
 @app.route('/set_parent')
+@validate_args_types(id=int, parent_id=(None, int))
 def set_parent():
     region_id = int(request.args.get('id'))
     parent_id = request.args.get('parent_id')
@@ -325,6 +369,7 @@ def set_parent():
 
 
 @app.route('/point')
+@validate_args_types(lat=float, lon=float)
 def find_osm_borders():
     lat = request.args.get('lat')
     lon = request.args.get('lon')
@@ -349,10 +394,11 @@ def find_osm_borders():
 
 
 @app.route('/from_osm')
+@validate_args_types(id=int)
 def copy_from_osm():
     if config.READONLY:
         abort(405)
-    osm_id = request.args.get('id')
+    osm_id = int(request.args.get('id'))
     name = request.args.get('name')
     name_sql = f"'{name}'" if name else "'name'"
     table = config.TABLE
@@ -381,6 +427,7 @@ def copy_from_osm():
 
 
 @app.route('/rename')
+@validate_args_types(id=int)
 def set_name():
     if config.READONLY:
         abort(405)
@@ -395,6 +442,7 @@ def set_name():
 
 
 @app.route('/delete')
+@validate_args_types(id=int)
 def delete_border():
     if config.READONLY:
         abort(405)
@@ -406,6 +454,7 @@ def delete_border():
 
 
 @app.route('/disable')
+@validate_args_types(id=int)
 def disable_border():
     if config.READONLY:
         abort(405)
@@ -418,6 +467,7 @@ def disable_border():
 
 
 @app.route('/enable')
+@validate_args_types(id=int)
 def enable_border():
     if config.READONLY:
         abort(405)
@@ -430,6 +480,7 @@ def enable_border():
 
 
 @app.route('/comment', methods=['POST'])
+@validate_args_types(id=int)
 def update_comment():
     region_id = int(request.form['id'])
     comment = request.form['comment']
@@ -450,12 +501,15 @@ def divide_do():
     return divide(preview=False)
 
 
+@validate_args_types(id=int)
 def divide(preview=False):
     if not preview:
         if config.READONLY:
             abort(405)
     region_id = int(request.args.get('id'))
     try:
+        # TODO: perform next_level field validation on client-side
+        ## and move the parameter check to @validate_args_types decorator
         next_level = int(request.args.get('next_level'))
     except ValueError:
         return jsonify(status="Not a number in next level")
@@ -471,6 +525,8 @@ def divide(preview=False):
         if not is_admin_region:
             return jsonify(status="Could not apply auto-division to non-administrative regions")
         try:
+            # TODO: perform mwm_size_thr field validation on client-side
+            ## and move the parameter check to @validate_args_types decorator
             mwm_size_thr = int(request.args.get('mwm_size_thr'))
         except ValueError:
             return jsonify(status="Not a number in thresholds")
@@ -490,6 +546,7 @@ def divide(preview=False):
 
 
 @app.route('/chop1')
+@validate_args_types(id=int)
 def chop_largest_or_farthest():
     if config.READONLY:
         abort(405)
@@ -532,6 +589,7 @@ def chop_largest_or_farthest():
 
 
 @app.route('/hull')
+@validate_args_types(id=int)
 def draw_hull():
     if config.READONLY:
         abort(405)
@@ -631,6 +689,7 @@ def backup_delete():
 
 
 @app.route('/josm')
+@validate_args_types(xmin=float, xmax=float, ymin=float, ymax=float)
 def make_osm():
     xmin = request.args.get('xmin')
     xmax = request.args.get('xmax')
@@ -651,6 +710,7 @@ def make_osm():
 
 
 @app.route('/josmbord')
+@validate_args_types(id=int)
 def josm_borders_along():
     region_id = int(request.args.get('id'))
     line = request.args.get('line')
@@ -738,6 +798,7 @@ def import_osm():
 
 
 @app.route('/potential_parents')
+@validate_args_types(id=int)
 def potential_parents():
     region_id = int(request.args.get('id'))
     parents = find_potential_parents(region_id)
@@ -745,6 +806,8 @@ def potential_parents():
 
 
 @app.route('/poly')
+@validate_args_types(xmin=(None, float), xmax=(None, float),
+                     ymin=(None, float), ymax=(None, float))
 def export_poly():
     table = request.args.get('table')
     if table in config.OTHER_TABLES:
@@ -755,10 +818,14 @@ def export_poly():
     fetch_borders_args = {'table': table,  'only_leaves': True}
 
     if 'xmin' in request.args:
-        xmin = request.args.get('xmin')
-        xmax = request.args.get('xmax')
-        ymin = request.args.get('ymin')
-        ymax = request.args.get('ymax')
+        # If one coordinate is given then others are also expected.
+        # If at least one coordinate is absent, SQL expressions
+        # like ST_Point(NULL, 55.6) would provide NULL, and the
+        # whole where_clause would be NULL, and the result set would be empty.
+        xmin = request.args.get('xmin') or 'NULL'
+        xmax = request.args.get('xmax') or 'NULL'
+        ymin = request.args.get('ymin') or 'NULL'
+        ymax = request.args.get('ymax') or 'NULL'
         fetch_borders_args['where_clause'] = (
                 f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
                                      f"ST_Point({xmax}, {ymax}))"
@@ -857,6 +924,7 @@ def statistics():
 
 
 @app.route('/border')
+@validate_args_types(id=int)
 def border():
     region_id = int(request.args.get('id'))
     table = config.TABLE
