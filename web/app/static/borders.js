@@ -190,24 +190,27 @@ function processBorders(data) {
 }
 
 function processOldBorders(data) {
-	var layer = L.geoJson(data.geojosn, {
+	var layer = L.geoJson(data.geojson, {
 		style: { fill: false, color: 'purple', weight: 5, clickable: false }
 	});
 	oldBordersLayer.addLayer(layer);
 }
 
 function processTooSmall(data) {
-	if( tooSmallLayer == null || !data || !('features' in data) )
+	if (tooSmallLayer == null || !data || !('rings' in data))
 		return;
 	tooSmallLayer.clearLayers();
-	var i, pt, tsm;
-	for( i = 0; i < data.features.length; i++ ) {
-		pt = data.features[i];
-		if( pt.name in borders ) {
-			tsm = L.marker([pt.lat, pt.lon], { title: pt.name + '\n' + 'Площадь: ' + L.Util.formatNum(pt.area / 1000000, 2) + ' км²' });
-			tsm.pLayer = borders[pt.name].layer;
-			tsm.on('click', selectLayer);
-			tooSmallLayer.addLayer(tsm);
+	for (var i = 0; i < data.rings.length; i++) {
+		var point = data.rings[i];
+		if (point.id in borders) {
+			var marker = L.marker(
+			        [point.lat, point.lon],
+			        {title: point.name + '\n' + 'Площадь: '
+			            + L.Util.formatNum(point.area, 2) + ' км²' }
+			);
+			marker.pLayer = borders[point.id].layer;
+			marker.on('click', selectLayer);
+			tooSmallLayer.addLayer(marker);
 		}
 	}
 }

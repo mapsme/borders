@@ -158,21 +158,26 @@ def query_small_in_bbox():
         table = config.TABLE
     cur = g.conn.cursor()
     cur.execute(f"""
-        SELECT name, round(ST_Area(geography(ring))) as area,
+        SELECT id, name, ST_Area(geography(ring))/1E6 AS area,
                ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
         FROM (
-            SELECT name, (ST_Dump(geom)).geom as ring
+            SELECT id, name, (ST_Dump(geom)).geom AS ring
             FROM {table}
             WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
         ) g
-        WHERE ST_Area(geography(ring)) < %s
-        """, (xmin, ymin, xmax, ymax, config.SMALL_KM2 * 1000000)
+        WHERE ST_Area(geography(ring))/1E6 < %s
+        """, (xmin, ymin, xmax, ymax, config.SMALL_KM2)
     )
-    result = []
-    for rec in cur:
-        result.append({ 'name': rec[0], 'area': rec[1],
-                        'lon': float(rec[2]), 'lat': float(rec[3]) })
-    return jsonify(features=result)
+    rings = []
+    for border_id, name, area, lon, lat in cur:
+        rings.append({
+            'id': border_id,
+            'name': name,
+            'area': area,
+            'lon': lon,
+            'lat': lat
+        })
+    return jsonify(rings=rings)
 
 
 @app.route('/config')
@@ -378,7 +383,7 @@ def find_osm_borders():
         SELECT osm_id, name, admin_level,
                 (CASE
                     WHEN ST_Area(geography(way)) = 'NaN'::DOUBLE PRECISION THEN 0
-                    ELSE ST_Area(geography(way))/1000000
+                    ELSE ST_Area(geography(way))/1E6
                 END) AS area_km
         FROM {config.OSM_TABLE} 
         WHERE ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326))
@@ -885,7 +890,7 @@ def statistics():
             SELECT name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)),
                 (CASE
                     WHEN ST_Area(geography(geom)) = 'NaN'::DOUBLE PRECISION THEN 0
-                    ELSE ST_Area(geography(geom)) / 1000000
+                    ELSE ST_Area(geography(geom))/1E6
                  END) AS area,
                  disabled,
                  (CASE
@@ -909,7 +914,7 @@ def statistics():
                         WHEN ST_Area(geography(g)) = 'NaN'::DOUBLE PRECISION THEN 0
                         ELSE ST_Area(geography(g))
                     END
-                ) / 1000000,
+                ) / 1E6,
                 sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g)))
             FROM (SELECT name, (ST_Dump(geom)).geom AS g FROM {table}) a
             GROUP BY name"""
