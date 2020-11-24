@@ -88,6 +88,16 @@ def validate_args_types(**expected_types):
     return f_with_validation
 
 
+def check_write_access(f):
+    @wraps(f)
+    def inner(*args, **kwargs):
+        if config.READONLY:
+            abort(403)
+        else:
+            return f(*args, **kwargs)
+    return inner
+
+
 @app.route('/static/<path:path>')
 def send_js(path):
     if config.DEBUG:
@@ -226,10 +236,9 @@ def search():
 
 
 @app.route('/split')
+@check_write_access
 @validate_args_types(id=int)
 def split():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     line = request.args.get('line')
     save_region = (request.args.get('save_region') == 'true')
@@ -293,10 +302,9 @@ def split():
 
 
 @app.route('/join')
+@check_write_access
 @validate_args_types(id1=int, id2=int)
 def join_borders():
-    if config.READONLY:
-        abort(405)
     region_id1 = int(request.args.get('id1'))
     region_id2 = int(request.args.get('id2'))
     if region_id1 == region_id2:
@@ -399,10 +407,9 @@ def find_osm_borders():
 
 
 @app.route('/from_osm')
+@check_write_access
 @validate_args_types(id=int)
 def copy_from_osm():
-    if config.READONLY:
-        abort(405)
     osm_id = int(request.args.get('id'))
     name = request.args.get('name')
     name_sql = f"'{name}'" if name else "'name'"
@@ -432,10 +439,9 @@ def copy_from_osm():
 
 
 @app.route('/rename')
+@check_write_access
 @validate_args_types(id=int)
 def set_name():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     table = config.TABLE
     new_name = request.args.get('new_name')
@@ -447,10 +453,9 @@ def set_name():
 
 
 @app.route('/delete')
+@check_write_access
 @validate_args_types(id=int)
 def delete_border():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     with g.conn.cursor() as cursor:
         cursor.execute(f"DELETE FROM {config.TABLE} WHERE id = %s",
@@ -460,10 +465,9 @@ def delete_border():
 
 
 @app.route('/disable')
+@check_write_access
 @validate_args_types(id=int)
 def disable_border():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
@@ -475,10 +479,9 @@ def disable_border():
 
 
 @app.route('/enable')
+@check_write_access
 @validate_args_types(id=int)
 def enable_border():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
@@ -507,15 +510,13 @@ def divide_preview():
 
 
 @app.route('/divide')
+@check_write_access
 def divide_do():
     return divide(preview=False)
 
 
 @validate_args_types(id=int)
 def divide(preview=False):
-    if not preview:
-        if config.READONLY:
-            abort(405)
     region_id = int(request.args.get('id'))
     try:
         # TODO: perform next_level field validation on client-side
@@ -560,10 +561,9 @@ def divide(preview=False):
 
 
 @app.route('/chop1')
+@check_write_access
 @validate_args_types(id=int)
 def chop_largest_or_farthest():
-    if config.READONLY:
-        abort(405)
     region_id = int(request.args.get('id'))
     table = config.TABLE
     with g.conn.cursor() as cursor:
@@ -606,10 +606,9 @@ def chop_largest_or_farthest():
 
 
 @app.route('/hull')
+@check_write_access
 @validate_args_types(id=int)
 def draw_hull():
-    if config.READONLY:
-        abort(405)
     border_id = int(request.args.get('id'))
     table = config.TABLE
     with g.conn.cursor() as cursor:
@@ -628,9 +627,8 @@ def draw_hull():
 
 
 @app.route('/backup')
+@check_write_access
 def backup_do():
-    if config.READONLY:
-        abort(405)
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup)
@@ -655,9 +653,8 @@ def backup_do():
 
 
 @app.route('/restore')
+@check_write_access
 def backup_restore():
-    if config.READONLY:
-        abort(405)
     ts = request.args.get('timestamp')
     table = config.TABLE
     backup_table = config.BACKUP
@@ -701,9 +698,8 @@ def backup_list():
 
 
 @app.route('/backdelete')
+@check_write_access
 def backup_delete():
-    if config.READONLY:
-        abort(405)
     ts = request.args.get('timestamp')
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
@@ -782,14 +778,13 @@ def import_error(msg):
 
 
 @app.route('/import', methods=['POST'])
+@check_write_access
 def import_osm():
     # Though this variable is not used it's necessary to consume request.data
     # so that nginx doesn't produce error like "#[error] 13#13: *65 readv()
     # failed (104: Connection reset by peer) while reading upstream"
     data = request.data
 
-    if config.READONLY:
-        abort(405)
     if not LXML:
         return import_error("importing is disabled due to absent lxml library")
     f = request.files['file']
