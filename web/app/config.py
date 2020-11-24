@@ -5,7 +5,7 @@ DEBUG = True
 # if the main table is read-only
 READONLY = False
 # main table name
-TABLE = 'borders'
+BORDERS_TABLE = 'borders'
 # from where OSM borders are imported
 OSM_TABLE = 'osm_borders'
 # All populated places in OSM

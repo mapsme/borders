@@ -19,14 +19,14 @@ def geom_inside_bbox_sql(xmin, ymin, xmax, ymax):
 
 
 def fetch_borders(**kwargs):
-    table = kwargs.get('table', config.TABLE)
+    borders_table = kwargs.get('table', config.BORDERS_TABLE)
     simplify = kwargs.get('simplify', 0)
     where_clause = kwargs.get('where_clause', '1=1')
     only_leaves = kwargs.get('only_leaves', True)
     osm_table = config.OSM_TABLE
     geom = (f'ST_SimplifyPreserveTopology(geom, {simplify})'
             if simplify > 0 else 'geom')
-    leaves_filter = (f""" AND id NOT IN (SELECT parent_id FROM {table}
+    leaves_filter = (f""" AND id NOT IN (SELECT parent_id FROM {borders_table}
                                           WHERE parent_id IS NOT NULL)"""
                      if only_leaves else '')
     query = f"""
@@ -48,14 +48,14 @@ def fetch_borders(**kwargs):
                  WHERE osm_id = t.id
                ) AS admin_level,
                parent_id,
-               ( SELECT name FROM {table}
+               ( SELECT name FROM {borders_table}
                  WHERE id = t.parent_id
                ) AS parent_name,
                ( SELECT admin_level FROM {osm_table}
-                 WHERE osm_id = (SELECT parent_id FROM {table} WHERE id = t.id)
+                 WHERE osm_id = (SELECT parent_id FROM {borders_table} WHERE id = t.id)
                ) AS parent_admin_level,
                mwm_size_est
-            FROM {table} t
+            FROM {borders_table} t
             WHERE ({where_clause}) {leaves_filter}
         ) q
         ORDER BY area DESC
@@ -105,7 +105,7 @@ def get_subregions_for_preview(region_ids, next_level):
 
 def get_subregions_one_for_preview(region_id, next_level):
     osm_table = config.OSM_TABLE
-    table = config.TABLE
+    borders_table = config.BORDERS_TABLE
     with g.conn.cursor() as cursor:
         # We use ST_SimplifyPreserveTopology, since ST_Simplify would give NULL
         # for very little regions.
@@ -115,7 +115,7 @@ def get_subregions_one_for_preview(region_id, next_level):
                    osm_id
             FROM {osm_table}
             WHERE ST_Contains(
-                    (SELECT geom FROM {table} WHERE id = %s), way
+                    (SELECT geom FROM {borders_table} WHERE id = %s), way
                   )
                 AND admin_level = %s
             """, (region_id, next_level)
@@ -196,16 +196,16 @@ def divide_into_subregions(region_ids, next_level):
 
 
 def divide_into_subregions_one(region_id, next_level):
-    table = config.TABLE
+    borders_table = config.BORDERS_TABLE
     osm_table = config.OSM_TABLE
-    subregions = get_subregions_info(g.conn, region_id, table,
+    subregions = get_subregions_info(g.conn, region_id, borders_table,
                                      next_level, need_cities=False)
     with g.conn.cursor() as cursor:
         is_admin_region = is_administrative_region(g.conn, region_id)
         if is_admin_region:
             for subregion_id, data in subregions.items():
                 cursor.execute(f"""
-                    INSERT INTO {table}
+                    INSERT INTO {borders_table}
                         (id, geom, name, parent_id, modified, count_k, mwm_size_est)
                     SELECT osm_id, way, name, %s, now(), -1, {data['mwm_size_est']}
                     FROM {osm_table}
@@ -215,26 +215,26 @@ def divide_into_subregions_one(region_id, next_level):
         else:
             for subregion_id, data in subregions.items():
                 cursor.execute(f"""
-                    INSERT INTO {table}
+                    INSERT INTO {borders_table}
                         (id, geom, name, parent_id, modified, count_k, mwm_size_est)
                     SELECT osm_id, way, name,
-                           (SELECT parent_id FROM {table} WHERE id = %s),
+                           (SELECT parent_id FROM {borders_table} WHERE id = %s),
                            now(), -1, {data['mwm_size_est']}
                     FROM {osm_table}
                     WHERE osm_id = %s
                     """, (region_id, subregion_id)
                 )
-            cursor.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
+            cursor.execute(f"DELETE FROM {borders_table} WHERE id = %s", (region_id,))
     g.conn.commit()
 
 
 def divide_into_clusters(region_ids, next_level, mwm_size_thr):
-    table = config.TABLE
+    borders_table = config.BORDERS_TABLE
     autosplit_table = config.AUTOSPLIT_TABLE
     cursor = g.conn.cursor()
     insert_cursor = g.conn.cursor()
     for region_id in region_ids:
-        cursor.execute(f"SELECT name FROM {table} WHERE id = %s", (region_id,))
+        cursor.execute(f"SELECT name FROM {borders_table} WHERE id = %s", (region_id,))
         base_name = cursor.fetchone()[0]
 
         where_clause = f"""
@@ -271,7 +271,7 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
                 subregion_id = free_id
                 name = f"{base_name}_{counter}"
             insert_cursor.execute(f"""
-                INSERT INTO {table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
+                INSERT INTO {borders_table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
                 SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1, mwm_size_est
                 FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
                 """, (name, cluster_id,) + splitting_sql_params
@@ -282,8 +282,8 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
 
 def get_free_id():
     with g.conn.cursor() as cursor:
-        table = config.TABLE
-        cursor.execute(f"SELECT min(id) FROM {table} WHERE id < -1000000000")
+        borders_table = config.BORDERS_TABLE
+        cursor.execute(f"SELECT min(id) FROM {borders_table} WHERE id < -1000000000")
         min_id = cursor.fetchone()[0]
     free_id = min_id - 1 if min_id else -1_000_000_001
     return free_id
@@ -296,10 +296,10 @@ def assign_region_to_lowest_parent(region_id):
     if pot_parents:
         # potential_parents are sorted by area ascending
         parent_id = pot_parents[0]['properties']['id']
-        table = config.TABLE
+        borders_table = config.BORDERS_TABLE
         with g.conn.cursor() as cursor:
             cursor.execute(f"""
-                UPDATE {table}
+                UPDATE {borders_table}
                 SET parent_id = %s
                 WHERE id = %s
                 """, (parent_id, region_id)
@@ -309,7 +309,7 @@ def assign_region_to_lowest_parent(region_id):
 
 
 def create_or_update_region(region, free_id):
-    table = config.TABLE
+    borders_table = config.BORDERS_TABLE
     with g.conn.cursor() as cursor:
         if region['id'] < 0:
             if not free_id:
@@ -317,7 +317,7 @@ def create_or_update_region(region, free_id):
             region_id = free_id
 
             cursor.execute(f"""
-                INSERT INTO {table}
+                INSERT INTO {borders_table}
                     (id, name, disabled, geom, modified, count_k)
                 VALUES (%s, %s, %s, ST_GeomFromText(%s, 4326), now(), -1)
                 """, (region_id, region['name'],
@@ -326,13 +326,13 @@ def create_or_update_region(region, free_id):
             assign_region_to_lowest_parent(region_id)
             return region_id
         else:
-            cursor.execute(f"SELECT count(1) FROM {table} WHERE id = %s",
+            cursor.execute(f"SELECT count(1) FROM {borders_table} WHERE id = %s",
                            (-region['id'],))
             rec = cursor.fetchone()
             if rec[0] == 0:
                 raise Exception(f"Can't find border ({region['id']}) for update")
             cursor.execute(f"""
-                UPDATE {table}
+                UPDATE {borders_table}
                 SET disabled = %s,
                     name = %s,
                     modified = now(),
@@ -346,7 +346,7 @@ def create_or_update_region(region, free_id):
 
 
 def find_potential_parents(region_id):
-    table = config.TABLE
+    borders_table = config.BORDERS_TABLE
     osm_table = config.OSM_TABLE
     p_geogr = "geography(p.geom)"
     c_geogr = "geography(c.geom)"
@@ -356,7 +356,7 @@ def find_potential_parents(region_id):
           p.name,
           (SELECT admin_level FROM {osm_table} WHERE osm_id = p.id) admin_level,
           ST_AsGeoJSON(ST_SimplifyPreserveTopology(p.geom, 0.01)) geometry
-        FROM {table} p, {table} c
+        FROM {borders_table} p, {borders_table} c
         WHERE c.id = %s
             AND ST_Intersects(p.geom, c.geom)
             AND ST_Area({p_geogr}) > ST_Area({c_geogr})

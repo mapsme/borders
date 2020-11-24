@@ -1,13 +1,12 @@
 import math
 from queue import Queue
 
-import config
+from config import (
+    BORDERS_TABLE as borders_table,
+    OSM_TABLE as osm_table,
+    OSM_PLACES_TABLE as osm_places_table,
+)
 from mwm_size_predictor import MwmSizePredictor
-
-
-table = config.TABLE
-osm_table = config.OSM_TABLE
-osm_places_table = config.OSM_PLACES_TABLE
 
 
 def get_subregions_info(conn, region_id, region_table,
@@ -35,11 +34,12 @@ def _get_subregions_basic_info(conn, region_id, region_table,
                                next_level, need_cities):
     cursor = conn.cursor()
     region_id_column, region_geom_column = (
-        ('id', 'geom') if region_table == table else
+        ('id', 'geom') if region_table == borders_table else
         ('osm_id', 'way')
     )
     cursor.execute(f"""
-        SELECT subreg.osm_id, subreg.name, ST_Area(geography(subreg.way))/1.0E+6 area
+        SELECT subreg.osm_id, subreg.name,
+               ST_Area(geography(subreg.way))/1.0E+6 area
         FROM {region_table} reg, {osm_table} subreg
         WHERE reg.{region_id_column} = %s AND subreg.admin_level = %s AND
               ST_Contains(reg.{region_geom_column}, subreg.way)
@@ -111,7 +111,7 @@ def update_border_mwm_size_estimation(conn, border_id):
     cursor = conn.cursor()
     cursor.execute(f"""
         SELECT name, ST_Area(geography(geom))/1.0E+6 area
-        FROM {table}
+        FROM {borders_table}
         WHERE id = %s""", (border_id, ))
     name, area = cursor.fetchone()
     if math.isnan(area):
@@ -124,7 +124,7 @@ def update_border_mwm_size_estimation(conn, border_id):
     }
     cursor.execute(f"""
         SELECT coalesce(p.population, 0), p.place
-        FROM {table} b, {config.OSM_PLACES_TABLE} p
+        FROM {borders_table} b, {osm_places_table} p
         WHERE b.id = %s
             AND ST_Contains(b.geom, p.center)
         """, (border_id, ))
@@ -140,7 +140,7 @@ def update_border_mwm_size_estimation(conn, border_id):
         ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt')
     ]
     mwm_size_est = MwmSizePredictor.predict(feature_array)
-    cursor.execute(f"UPDATE {table} SET mwm_size_est = %s WHERE id = %s",
+    cursor.execute(f"UPDATE {borders_table} SET mwm_size_est = %s WHERE id = %s",
                    (mwm_size_est, border_id))
     conn.commit()
 
@@ -159,7 +159,7 @@ def is_leaf(conn, region_id):
     cursor = conn.cursor()
     cursor.execute(f"""
         SELECT count(1)
-        FROM {table}
+        FROM {borders_table}
         WHERE parent_id = %s
         """, (region_id,)
     )
@@ -184,12 +184,14 @@ def get_predecessors(conn, region_id):
     while True:
         cursor.execute(f"""
             SELECT id, name, parent_id
-            FROM {table} WHERE id = %s
+            FROM {borders_table} WHERE id = %s
             """, (region_id,)
         )
         rec = cursor.fetchone()
         if not rec:
-           raise Exception(f"No record in '{table}' table with id = {region_id}")
+           raise Exception(
+               f"No record in '{borders_table}' table with id = {region_id}"
+           )
         predecessors.append(rec[0:2])
         parent_id = rec[2]
         if not parent_id:
@@ -206,7 +208,7 @@ def get_region_full_name(conn, region_id):
 def get_parent_region_id(conn, region_id):
     cursor = conn.cursor()
     cursor.execute(f"""
-        SELECT parent_id FROM {table} WHERE id = %s
+        SELECT parent_id FROM {borders_table} WHERE id = %s
         """, (region_id,))
     rec = cursor.fetchone()
     parent_id = int(rec[0]) if rec and rec[0] is not None else None
@@ -216,7 +218,7 @@ def get_parent_region_id(conn, region_id):
 def get_child_region_ids(conn, region_id):
     cursor = conn.cursor()
     cursor.execute(f"""
-        SELECT id FROM {table} WHERE parent_id = %s
+        SELECT id FROM {borders_table} WHERE parent_id = %s
         """, (region_id,))
     child_ids = []
     for rec in cursor:
@@ -257,11 +259,11 @@ def find_osm_child_regions(conn, region_id):
     with conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT c.id, oc.admin_level
-            FROM {table} c, {table} p, {osm_table} oc
+            FROM {borders_table} c, {borders_table} p, {osm_table} oc
             WHERE p.id = c.parent_id AND c.id = oc.osm_id
                 AND p.id = %s
             """, (region_id,)
         )
-        for rec in cursor:
-            children.append({'id': int(rec[0]), 'admin_level': int(rec[1])})
+        for osm_id, admin_level in cursor:
+            children.append({'id': osm_id, 'admin_level': admin_level})
     return children

@@ -14,7 +14,7 @@ except:
     HAS_DAEMON = False
 
 
-table = config.TABLE
+borders_table = config.BORDERS_TABLE
 
 CONNECT_WAIT_INTERVAL = 5
 CHECK_BORDERS_INTERVAL = 10
@@ -32,7 +32,7 @@ no_count_queries = [
             SELECT id, name,
             ST_Area(geography(geom))/1000000.0 area,
             ST_Area(geography(ST_Envelope(geom)))/1000000.0 env_area
-            FROM {table}
+            FROM {borders_table}
             WHERE {condition}) q
         WHERE area != 'NaN'::double precision
             AND area <= env_area
@@ -59,7 +59,7 @@ class App():
                     self.conn.autocommit = True
                 
                 with self.conn.cursor() as cur:
-                    cur.execute(f"SELECT count_k FROM {config.TABLE} LIMIT 1")
+                    cur.execute(f"SELECT count_k FROM {borders_table} LIMIT 1")
                 
                 return self.conn
             except psycopg2.Error:
@@ -82,10 +82,10 @@ class App():
 
         with self.get_connection().cursor() as cur:
             cur.execute(f"""
-                UPDATE {table}
+                UPDATE {borders_table}
                 SET count_k = n.count
                 FROM (SELECT coalesce(sum(t.count), 0) AS count
-                      FROM {table} b, tiles t
+                      FROM {borders_table} b, tiles t
                       WHERE b.id = %s AND ST_Intersects(b.geom, t.tile)
                      ) AS n
                 WHERE id = %s

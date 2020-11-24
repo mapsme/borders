@@ -1,5 +1,5 @@
 from config import (
-    TABLE as table,
+    BORDERS_TABLE as borders_table,
     OSM_TABLE as osm_table
 )
 from countries_division import country_initial_levels
@@ -15,7 +15,7 @@ class CountryStructureException(Exception):
 
 def _clear_borders(conn):
     with conn.cursor() as cursor:
-        cursor.execute(f"DELETE FROM {table}")
+        cursor.execute(f"DELETE FROM {borders_table}")
     conn.commit()
 
 
@@ -23,7 +23,7 @@ def _find_subregions(conn, osm_ids, next_level, regions):
     """Return subregions of level 'next_level' for regions with osm_ids."""
     subregion_ids = []
     for osm_id in osm_ids:
-        more_subregions = get_subregions_info(conn, osm_id, table,
+        more_subregions = get_subregions_info(conn, osm_id, borders_table,
                                               next_level, need_cities=False)
         for subregion_id, subregion_data in more_subregions.items():
             region_data = regions.setdefault(subregion_id, {})
@@ -49,7 +49,7 @@ def _create_regions(conn, osm_ids, regions):
     )
     with conn.cursor() as cursor:
         cursor.execute(f"""
-            INSERT INTO {table} (id, name, parent_id, mwm_size_est,
+            INSERT INTO {borders_table} (id, name, parent_id, mwm_size_est,
                                  geom, modified)
             VALUES {sql_values}
             """, tuple(regions[osm_id]['name'] for osm_id in osm_ids)
