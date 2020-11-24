@@ -117,28 +117,25 @@ def get_best_cluster_to_join_with(small_cluster_id,
 
 
 def calculate_common_border_matrix(conn, subregion_ids):
-    cursor = conn.cursor()
     subregion_ids_str = ','.join(str(x) for x in subregion_ids)
     # ST_Length returns 0 if its parameter is a geometry other than
     # LINESTRING or MULTILINESTRING
-    cursor.execute(f"""
-        SELECT b1.osm_id AS osm_id1, b2.osm_id AS osm_id2,
-               ST_Length(geography(ST_Intersection(b1.way, b2.way))) AS intersection
-        FROM {osm_table} b1, {osm_table} b2
-        WHERE b1.osm_id IN ({subregion_ids_str})
-          AND b2.osm_id IN ({subregion_ids_str})
-          AND b1.osm_id < b2.osm_id
-        """
-    )
-    common_border_matrix = {}  # {subregion_id: { subregion_id: float} } where len > 0
-    for rec in cursor:
-        border_len = float(rec[2])
-        if border_len == 0.0:
-            continue
-        osm_id1 = int(rec[0])
-        osm_id2 = int(rec[1])
-        common_border_matrix.setdefault(osm_id1, {})[osm_id2] = border_len
-        common_border_matrix.setdefault(osm_id2, {})[osm_id1] = border_len
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT b1.osm_id AS osm_id1, b2.osm_id AS osm_id2,
+                   ST_Length(geography(ST_Intersection(b1.way, b2.way)))
+            FROM {osm_table} b1, {osm_table} b2
+            WHERE b1.osm_id IN ({subregion_ids_str})
+              AND b2.osm_id IN ({subregion_ids_str})
+              AND b1.osm_id < b2.osm_id
+            """
+        )
+        common_border_matrix = {}  # {subregion_id: { subregion_id: float} } where len > 0
+        for osm_id1, osm_id2, border_len in cursor:
+            if border_len == 0.0:
+                continue
+            common_border_matrix.setdefault(osm_id1, {})[osm_id2] = border_len
+            common_border_matrix.setdefault(osm_id2, {})[osm_id1] = border_len
     return common_border_matrix
 
 
@@ -179,34 +176,36 @@ def get_union_sql(subregion_ids):
         return f"""
             SELECT ST_Union(
               ({get_union_sql(subregion_ids[0:1])}),
-              ({get_union_sql(subregion_ids[1: ])})
+              ({get_union_sql(subregion_ids[1:])})
             )
             """
 
 
 def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
-    cursor = conn.cursor()
-    # Remove previous splitting of the region
-    cursor.execute(f"""
-        DELETE FROM {autosplit_table}
-        WHERE osm_border_id = {dcu.region_id}
-          AND mwm_size_thr = {dcu.mwm_size_thr}
-        """)
-    for cluster_id, data in dcu.clusters.items():
-        subregion_ids = data['subregion_ids']
-        subregion_ids_array_str = '{' + ','.join(str(x) for x in subregion_ids) + '}'
-        cluster_geometry_sql = get_union_sql(subregion_ids)
+    with conn.cursor() as cursor:
+        # Remove previous splitting of the region
         cursor.execute(f"""
-            INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
-                                           mwm_size_thr, mwm_size_est)
-              VALUES (
-                {dcu.region_id},
-                '{subregion_ids_array_str}',
-                ({cluster_geometry_sql}),
-                {dcu.mwm_size_thr},
-                {data['mwm_size_est']}
-              )
+            DELETE FROM {autosplit_table}
+            WHERE osm_border_id = {dcu.region_id}
+              AND mwm_size_thr = {dcu.mwm_size_thr}
             """)
+        for cluster_id, data in dcu.clusters.items():
+            subregion_ids = data['subregion_ids']
+            subregion_ids_array_str = (
+                    '{' + ','.join(str(x) for x in subregion_ids) + '}'
+            )
+            cluster_geometry_sql = get_union_sql(subregion_ids)
+            cursor.execute(f"""
+                INSERT INTO {autosplit_table} (osm_border_id, subregion_ids,
+                                               geom, mwm_size_thr, mwm_size_est)
+                  VALUES (
+                    {dcu.region_id},
+                    '{subregion_ids_array_str}',
+                    ({cluster_geometry_sql}),
+                    {dcu.mwm_size_thr},
+                    {data['mwm_size_est']}
+                  )
+                """)
     conn.commit()
 
 

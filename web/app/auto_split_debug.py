@@ -41,11 +41,11 @@ def save_splitting_to_file(conn, dcu: DisjointClusterUnion):
         json.dump(dcu.clusters, f, ensure_ascii=False, indent=2)
 
 
-def get_geojson(conn, union_sql):
-    cursor = conn.cursor()
-    cursor.execute(f"""SELECT ST_AsGeoJSON(({union_sql}))""")
-    rec = cursor.fetchone()
-    return rec[0]
+def get_geojson(conn, sql_geometry_expr):
+    with conn.cursor() as cursor:
+        cursor.execute(f"""SELECT ST_AsGeoJSON(({sql_geometry_expr}))""")
+        rec = cursor.fetchone()
+        return rec[0]
 
 
 def write_polygons_to_poly(file, polygons, name_prefix):

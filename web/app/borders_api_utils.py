@@ -13,6 +13,11 @@ from subregions import (
 )
 
 
+def geom_inside_bbox_sql(xmin, ymin, xmax, ymax):
+    return (f'(geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),'
+                                  f'ST_Point({xmax}, {ymax})))')
+
+
 def fetch_borders(**kwargs):
     table = kwargs.get('table', config.TABLE)
     simplify = kwargs.get('simplify', 0)
@@ -55,30 +60,30 @@ def fetch_borders(**kwargs):
         ) q
         ORDER BY area DESC
         """
-    cur = g.conn.cursor()
-    cur.execute(query)
-    borders = []
-    for rec in cur:
-        region_id = rec[8]
-        country_id, country_name = get_region_country(g.conn, region_id)
-        props = { 'name': rec[0] or '', 'nodes': rec[2], 'modified': rec[3],
-                  'disabled': rec[4], 'count_k': rec[5],
-                  'comment': rec[6],
-                  'area': rec[7],
-                  'id': region_id,
-                  'admin_level': rec[9],
-                  'parent_id': rec[10],
-                  'parent_name': rec[11],
-                  'parent_admin_level': rec[12],
-                  'country_id': country_id,
-                  'country_name': country_name,
-                  'mwm_size_est': rec[13]
-                }
-        feature = {'type': 'Feature',
-                   'geometry': json.loads(rec[1]),
-                   'properties': props
-                  }
-        borders.append(feature)
+    with g.conn.cursor() as cursor:
+        cursor.execute(query)
+        borders = []
+        for rec in cursor:
+            region_id = rec[8]
+            country_id, country_name = get_region_country(g.conn, region_id)
+            props = { 'name': rec[0] or '', 'nodes': rec[2], 'modified': rec[3],
+                      'disabled': rec[4], 'count_k': rec[5],
+                      'comment': rec[6],
+                      'area': rec[7],
+                      'id': region_id,
+                      'admin_level': rec[9],
+                      'parent_id': rec[10],
+                      'parent_name': rec[11],
+                      'parent_admin_level': rec[12],
+                      'country_id': country_id,
+                      'country_name': country_name,
+                      'mwm_size_est': rec[13]
+                    }
+            feature = {'type': 'Feature',
+                       'geometry': json.loads(rec[1]),
+                       'properties': props
+                      }
+            borders.append(feature)
     return borders
 
 
@@ -101,25 +106,25 @@ def get_subregions_for_preview(region_ids, next_level):
 def get_subregions_one_for_preview(region_id, next_level):
     osm_table = config.OSM_TABLE
     table = config.TABLE
-    cur = g.conn.cursor()
-    # We use ST_SimplifyPreserveTopology, since ST_Simplify would give NULL
-    # for very little regions.
-    cur.execute(f"""
-        SELECT name,
-               ST_AsGeoJSON(ST_SimplifyPreserveTopology(way, 0.01)) as way,
-               osm_id
-        FROM {osm_table}
-        WHERE ST_Contains(
-                (SELECT geom FROM {table} WHERE id = %s), way
-              )
-            AND admin_level = %s
-        """, (region_id, next_level)
-    )
-    subregions = []
-    for rec in cur:
-        feature = {'type': 'Feature', 'geometry': json.loads(rec[1]),
-                   'properties': {'name': rec[0]}}
-        subregions.append(feature)
+    with g.conn.cursor() as cursor:
+        # We use ST_SimplifyPreserveTopology, since ST_Simplify would give NULL
+        # for very little regions.
+        cursor.execute(f"""
+            SELECT name,
+                   ST_AsGeoJSON(ST_SimplifyPreserveTopology(way, 0.01)) as way,
+                   osm_id
+            FROM {osm_table}
+            WHERE ST_Contains(
+                    (SELECT geom FROM {table} WHERE id = %s), way
+                  )
+                AND admin_level = %s
+            """, (region_id, next_level)
+        )
+        subregions = []
+        for rec in cursor:
+            feature = {'type': 'Feature', 'geometry': json.loads(rec[1]),
+                       'properties': {'name': rec[0]}}
+            subregions.append(feature)
     return subregions
 
 
@@ -133,35 +138,35 @@ def get_clusters_for_preview(region_ids, next_level, thresholds):
 
 def get_clusters_for_preview_one(region_id, next_level, mwm_size_thr):
     autosplit_table = config.AUTOSPLIT_TABLE
-    cursor = g.conn.cursor()
     where_clause = f"""
         osm_border_id = %s
         AND mwm_size_thr = %s
         """
     splitting_sql_params = (region_id, mwm_size_thr)
-    cursor.execute(f"""
-        SELECT 1 FROM {autosplit_table}
-        WHERE {where_clause}
-        """, splitting_sql_params
-    )
-    if cursor.rowcount == 0:
-        split_region(g.conn, region_id, next_level, mwm_size_thr)
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT 1 FROM {autosplit_table}
+            WHERE {where_clause}
+            """, splitting_sql_params
+        )
+        if cursor.rowcount == 0:
+            split_region(g.conn, region_id, next_level, mwm_size_thr)
 
-    cursor.execute(f"""
-        SELECT subregion_ids[1],
-               ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
-        FROM {autosplit_table}
-        WHERE {where_clause}
-        """, splitting_sql_params
-    )
-    clusters = []
-    for rec in cursor:
-        cluster = {
-            'type': 'Feature',
-            'geometry': json.loads(rec[1]),
-            'properties': {'osm_id': int(rec[0])}
-        }
-        clusters.append(cluster)
+        cursor.execute(f"""
+            SELECT subregion_ids[1],
+                   ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.01)) as way
+            FROM {autosplit_table}
+            WHERE {where_clause}
+            """, splitting_sql_params
+        )
+        clusters = []
+        for rec in cursor:
+            cluster = {
+                'type': 'Feature',
+                'geometry': json.loads(rec[1]),
+                'properties': {'osm_id': int(rec[0])}
+            }
+            clusters.append(cluster)
     return clusters
 
 
@@ -195,31 +200,32 @@ def divide_into_subregions_one(region_id, next_level):
     osm_table = config.OSM_TABLE
     subregions = get_subregions_info(g.conn, region_id, table,
                                      next_level, need_cities=False)
-    cursor = g.conn.cursor()
-    is_admin_region = is_administrative_region(g.conn, region_id)
-    if is_admin_region:
-        for subregion_id, data in subregions.items():
-            cursor.execute(f"""
-                INSERT INTO {table}
-                    (id, geom, name, parent_id, modified, count_k, mwm_size_est)
-                SELECT osm_id, way, name, %s, now(), -1, {data['mwm_size_est']}
-                FROM {osm_table}
-                WHERE osm_id = %s
-                """, (region_id, subregion_id)
-            )
-    else:
-        for subregion_id, data in subregions.items():
-            cursor.execute(f"""
-                INSERT INTO {table}
-                    (id, geom, name, parent_id, modified, count_k, mwm_size_est)
-                SELECT osm_id, way, name,
-                       (SELECT parent_id FROM {table} WHERE id = %s),
-                       now(), -1, {data['mwm_size_est']}
-                FROM {osm_table}
-                WHERE osm_id = %s
-                """, (region_id, subregion_id)
-            )
-        cursor.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
+    with g.conn.cursor() as cursor:
+        is_admin_region = is_administrative_region(g.conn, region_id)
+        if is_admin_region:
+            for subregion_id, data in subregions.items():
+                cursor.execute(f"""
+                    INSERT INTO {table}
+                        (id, geom, name, parent_id, modified, count_k, mwm_size_est)
+                    SELECT osm_id, way, name, %s, now(), -1, {data['mwm_size_est']}
+                    FROM {osm_table}
+                    WHERE osm_id = %s
+                    """, (region_id, subregion_id)
+                )
+        else:
+            for subregion_id, data in subregions.items():
+                cursor.execute(f"""
+                    INSERT INTO {table}
+                        (id, geom, name, parent_id, modified, count_k, mwm_size_est)
+                    SELECT osm_id, way, name,
+                           (SELECT parent_id FROM {table} WHERE id = %s),
+                           now(), -1, {data['mwm_size_est']}
+                    FROM {osm_table}
+                    WHERE osm_id = %s
+                    """, (region_id, subregion_id)
+                )
+            cursor.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
+    g.conn.commit()
 
 
 def divide_into_clusters(region_ids, next_level, mwm_size_thr):
@@ -275,64 +281,67 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
 
 
 def get_free_id():
-    cursor = g.conn.cursor()
-    table = config.TABLE
-    cursor.execute(f"SELECT min(id) FROM {table} WHERE id < -1000000000")
-    min_id = cursor.fetchone()[0]
+    with g.conn.cursor() as cursor:
+        table = config.TABLE
+        cursor.execute(f"SELECT min(id) FROM {table} WHERE id < -1000000000")
+        min_id = cursor.fetchone()[0]
     free_id = min_id - 1 if min_id else -1_000_000_001
     return free_id
 
 
 def assign_region_to_lowest_parent(region_id):
+    """Lowest parent is the region with lowest (maximum by absolute value)
+    admin_level containing given region."""
     pot_parents = find_potential_parents(region_id)
     if pot_parents:
         # potential_parents are sorted by area ascending
         parent_id = pot_parents[0]['properties']['id']
-        cursor = g.conn.cursor()
         table = config.TABLE
-        cursor.execute(f"""
-            UPDATE {table}
-            SET parent_id = %s
-            WHERE id = %s
-            """, (parent_id, region_id)
-        )
+        with g.conn.cursor() as cursor:
+            cursor.execute(f"""
+                UPDATE {table}
+                SET parent_id = %s
+                WHERE id = %s
+                """, (parent_id, region_id)
+            )
         return True
     return False
 
 
 def create_or_update_region(region, free_id):
-    cursor = g.conn.cursor()
     table = config.TABLE
-    if region['id'] < 0:
-        if not free_id:
-            free_id = get_free_id()
-        region_id = free_id
+    with g.conn.cursor() as cursor:
+        if region['id'] < 0:
+            if not free_id:
+                free_id = get_free_id()
+            region_id = free_id
 
-        cursor.execute(f"""
-            INSERT INTO {table}
-                (id, name, disabled, geom, modified, count_k)
-            VALUES (%s, %s, %s, ST_GeomFromText(%s, 4326), now(), -1)
-            """, (region_id, region['name'], region['disabled'], region['wkt'])
-        )
-        assign_region_to_lowest_parent(region_id)
-        return region_id
-    else:
-        cursor.execute(f"SELECT count(1) FROM {table} WHERE id = %s",
-                       (-region['id'],))
-        rec = cursor.fetchone()
-        if rec[0] == 0:
-            raise Exception(f"Can't find border ({region['id']}) for update")
-        cursor.execute(f"""
-            UPDATE {table}
-            SET disabled = %s,
-                name = %s,
-                modified = now(),
-                count_k = -1,
-                geom = ST_GeomFromText(%s, 4326)
-            WHERE id = %s
-            """, (region['disabled'], region['name'],
-                  region['wkt'], -region['id'])
-        )
+            cursor.execute(f"""
+                INSERT INTO {table}
+                    (id, name, disabled, geom, modified, count_k)
+                VALUES (%s, %s, %s, ST_GeomFromText(%s, 4326), now(), -1)
+                """, (region_id, region['name'],
+                      region['disabled'], region['wkt'])
+            )
+            assign_region_to_lowest_parent(region_id)
+            return region_id
+        else:
+            cursor.execute(f"SELECT count(1) FROM {table} WHERE id = %s",
+                           (-region['id'],))
+            rec = cursor.fetchone()
+            if rec[0] == 0:
+                raise Exception(f"Can't find border ({region['id']}) for update")
+            cursor.execute(f"""
+                UPDATE {table}
+                SET disabled = %s,
+                    name = %s,
+                    modified = now(),
+                    count_k = -1,
+                    geom = ST_GeomFromText(%s, 4326)
+                WHERE id = %s
+                """, (region['disabled'], region['name'],
+                      region['wkt'], -region['id'])
+            )
         return region['id']
 
 
@@ -341,7 +350,6 @@ def find_potential_parents(region_id):
     osm_table = config.OSM_TABLE
     p_geogr = "geography(p.geom)"
     c_geogr = "geography(c.geom)"
-    cursor = g.conn.cursor()
     query = f"""
         SELECT
           p.id,
@@ -356,18 +364,19 @@ def find_potential_parents(region_id):
                     0.5 * ST_Area({c_geogr})
         ORDER BY ST_Area({p_geogr})
     """
-    cursor.execute(query, (region_id,))
-    parents = []
-    for rec in cursor:
-        props = {
-                'id': rec[0],
-                'name': rec[1],
-                'admin_level': rec[2],
-        }
-        feature = {
-                'type': 'Feature',
-                'geometry': json.loads(rec[3]),
-                'properties': props
-        }
-        parents.append(feature)
+    with g.conn.cursor() as cursor:
+        cursor.execute(query, (region_id,))
+        parents = []
+        for rec in cursor:
+            props = {
+                    'id': rec[0],
+                    'name': rec[1],
+                    'admin_level': rec[2],
+            }
+            feature = {
+                    'type': 'Feature',
+                    'geometry': json.loads(rec[3]),
+                    'properties': props
+            }
+            parents.append(feature)
     return parents

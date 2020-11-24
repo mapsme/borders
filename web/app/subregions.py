@@ -253,15 +253,15 @@ def get_similar_regions(conn, region_id, only_leaves=False):
 
 
 def find_osm_child_regions(conn, region_id):
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT c.id, oc.admin_level
-        FROM {table} c, {table} p, {osm_table} oc
-        WHERE p.id = c.parent_id AND c.id = oc.osm_id
-            AND p.id = %s
-        """, (region_id,)
-    )
     children = []
-    for rec in cursor:
-        children.append({'id': int(rec[0]), 'admin_level': int(rec[1])})
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT c.id, oc.admin_level
+            FROM {table} c, {table} p, {osm_table} oc
+            WHERE p.id = c.parent_id AND c.id = oc.osm_id
+                AND p.id = %s
+            """, (region_id,)
+        )
+        for rec in cursor:
+            children.append({'id': int(rec[0]), 'admin_level': int(rec[1])})
     return children

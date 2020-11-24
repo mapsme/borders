@@ -128,15 +128,11 @@ def query_bbox():
     simplify_level = request.args.get('simplify')
     simplify = simplify_level_to_postgis_value(simplify_level)
     table = request.args.get('table')
-    if table in config.OTHER_TABLES:
-        table = config.OTHER_TABLES[table]
-    else:
-        table = config.TABLE
+    table = config.OTHER_TABLES.get(table, config.TABLE)
     borders = fetch_borders(
         table=table,
         simplify=simplify,
-        where_clause=f'geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),'
-                                          f'ST_Point({xmax}, {ymax}))'
+        where_clause=geom_inside_bbox_sql(xmin, ymin, xmax, ymax)
     )
     return jsonify(
         status='ok',
@@ -152,32 +148,29 @@ def query_small_in_bbox():
     ymin = request.args.get('ymin')
     ymax = request.args.get('ymax')
     table = request.args.get('table')
-    if table in config.OTHER_TABLES:
-        table = config.OTHER_TABLES[table]
-    else:
-        table = config.TABLE
-    cur = g.conn.cursor()
-    cur.execute(f"""
-        SELECT id, name, ST_Area(geography(ring))/1E6 AS area,
-               ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
-        FROM (
-            SELECT id, name, (ST_Dump(geom)).geom AS ring
-            FROM {table}
-            WHERE geom && ST_MakeBox2D(ST_Point(%s, %s), ST_Point(%s, %s))
-        ) g
-        WHERE ST_Area(geography(ring))/1E6 < %s
-        """, (xmin, ymin, xmax, ymax, config.SMALL_KM2)
-    )
-    rings = []
-    for border_id, name, area, lon, lat in cur:
-        rings.append({
-            'id': border_id,
-            'name': name,
-            'area': area,
-            'lon': lon,
-            'lat': lat
-        })
-    return jsonify(rings=rings)
+    table = config.OTHER_TABLES.get(table, config.TABLE)
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT id, name, ST_Area(geography(ring))/1E6 AS area,
+                   ST_X(ST_Centroid(ring)), ST_Y(ST_Centroid(ring))
+            FROM (
+                SELECT id, name, (ST_Dump(geom)).geom AS ring
+                FROM {table}
+                WHERE {geom_inside_bbox_sql(xmin, ymin, xmax, ymax)}
+            ) g
+            WHERE ST_Area(geography(ring))/1E6 < %s
+            """, (config.SMALL_KM2,)
+        )
+        rings = []
+        for border_id, name, area, lon, lat in cursor:
+            rings.append({
+                'id': border_id,
+                'name': name,
+                'area': area,
+                'lon': lon,
+                'lat': lat
+            })
+        return jsonify(rings=rings)
 
 
 @app.route('/config')
@@ -185,30 +178,30 @@ def get_server_configuration():
     osm = False
     backup = False
     old = []
-    try:
-        cur = g.conn.cursor()
-        cur.execute(f"""SELECT osm_id, ST_Area(way), admin_level, name
-                        FROM {config.OSM_TABLE} LIMIT 2""")
-        if cur.rowcount == 2:
-            osm = True
-    except psycopg2.Error as e:
-        pass
-    try:
-        cur.execute(f"""SELECT backup, id, name, parent_id, ST_Area(geom),
-                              modified, disabled, count_k, cmnt
-                       FROM {config.BACKUP} LIMIT 2""")
-        backup = True
-    except psycopg2.Error as e:
-        pass
-    for t, tname in config.OTHER_TABLES.items():
+    with g.conn.cursor() as cursor:
         try:
-            cur.execute(f"""SELECT name, ST_Area(geom), modified, disabled,
-                                   count_k, cmnt
-                            FROM {tname} LIMIT 2""")
-            if cur.rowcount == 2:
-                old.append(t)
+            cursor.execute(f"""SELECT osm_id, ST_Area(way), admin_level, name
+                               FROM {config.OSM_TABLE} LIMIT 2""")
+            if cursor.rowcount == 2:
+                osm = True
         except psycopg2.Error as e:
             pass
+        try:
+            cursor.execute(f"""SELECT backup, id, name, parent_id, cmnt,
+                                  modified, disabled, count_k, ST_Area(geom)
+                           FROM {config.BACKUP} LIMIT 2""")
+            backup = True
+        except psycopg2.Error as e:
+            pass
+        for t, tname in config.OTHER_TABLES.items():
+            try:
+                cursor.execute(f"""SELECT name, ST_Area(geom), modified,
+                                          disabled, count_k, cmnt
+                                FROM {tname} LIMIT 2""")
+                if cursor.rowcount == 2:
+                    old.append(t)
+            except psycopg2.Error as e:
+                pass
     return jsonify(osm=osm, tables=old,
                    readonly=config.READONLY,
                    backup=backup,
@@ -218,17 +211,17 @@ def get_server_configuration():
 @app.route('/search')
 def search():
     query = request.args.get('q')
-    cur = g.conn.cursor()
-    cur.execute(f"""
-        SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom)
-        FROM {config.TABLE}
-        WHERE name ILIKE %s
-        ORDER BY (ST_Area(geography(geom)))
-        LIMIT 1""", (f'%{query}%',)
-    )
-    if cur.rowcount > 0:
-        rec = cur.fetchone()
-        return jsonify(status='ok', bounds=rec)
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom)
+            FROM {config.TABLE}
+            WHERE name ILIKE %s
+            ORDER BY (ST_Area(geography(geom)))
+            LIMIT 1""", (f'%{query}%',)
+        )
+        if cursor.rowcount > 0:
+            rec = cursor.fetchone()
+            return jsonify(status='ok', bounds=rec)
     return jsonify(status='not found')
 
 
@@ -241,55 +234,60 @@ def split():
     line = request.args.get('line')
     save_region = (request.args.get('save_region') == 'true')
     table = config.TABLE
-    cur = g.conn.cursor()
-    # check that we're splitting a single polygon
-    cur.execute(f"""
-        SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
-        """, (region_id,)
-    )
-    res = cur.fetchone()
-    if not res or res[0] != 1:
-        return jsonify(status='border should have one outer ring')
-    cur.execute(f"""
-        SELECT ST_AsText((ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom)
-        FROM {table}
-        WHERE id = %s
-        """, (line, region_id)
-    )
-    if cur.rowcount > 1:
-        # no use of doing anything if the polygon wasn't modified
-        geometries = []
-        for res in cur:
-            geometries.append(res[0])
-        # get region properties and delete old border
-        cur.execute(f"""
-            SELECT name, parent_id, disabled FROM {table} WHERE id = %s
-            """, (region_id,))
-        name, parent_id, disabled = cur.fetchone()
-        if save_region:
-            parent_id = region_id
-        else:
-            cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id,))
-        base_name = name
-        # insert new geometries
-        counter = 1
-        new_ids = []
-        free_id = get_free_id()
-        for geom in geometries:
-            cur.execute(f"""
-                INSERT INTO {table} (id, name, geom, disabled, count_k, modified, parent_id)
-                    VALUES (%s, %s, ST_GeomFromText(%s, 4326), %s, -1, now(), %s)
-                """, (free_id, f'{base_name}_{counter}', geom, disabled, parent_id)
-            )
-            new_ids.append(free_id)
-            counter += 1
-            free_id -= 1
-        warnings = []
-        for border_id in new_ids:
-            try:
-                update_border_mwm_size_estimation(g.conn, border_id)
-            except Exception as e:
-                warnings.append(str(e))
+    with g.conn.cursor() as cursor:
+        # check that we're splitting a single polygon
+        cursor.execute(f"""
+            SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
+            """, (region_id,)
+        )
+        res = cursor.fetchone()
+        if not res or res[0] != 1:
+            return jsonify(status='border should have one outer ring')
+        cursor.execute(f"""
+            SELECT ST_AsText(
+                    (ST_Dump(ST_Split(geom, ST_GeomFromText(%s, 4326)))).geom)
+            FROM {table}
+            WHERE id = %s
+            """, (line, region_id)
+        )
+        if cursor.rowcount > 1:
+            # no use of doing anything if the polygon wasn't modified
+            geometries = []
+            for res in cursor:
+                geometries.append(res[0])
+            # get region properties and delete old border
+            cursor.execute(f"""
+                SELECT name, parent_id, disabled FROM {table} WHERE id = %s
+                """, (region_id,))
+            name, parent_id, disabled = cursor.fetchone()
+            if save_region:
+                parent_id = region_id
+            else:
+                cursor.execute(f"DELETE FROM {table} WHERE id = %s",
+                               (region_id,))
+            base_name = name
+            # insert new geometries
+            counter = 1
+            new_ids = []
+            free_id = get_free_id()
+            for geom in geometries:
+                cursor.execute(f"""
+                    INSERT INTO {table} (id, name, geom, disabled, count_k,
+                                         modified, parent_id)
+                        VALUES (%s, %s, ST_GeomFromText(%s, 4326), %s, -1,
+                                now(), %s)
+                    """, (free_id, f'{base_name}_{counter}', geom,
+                          disabled, parent_id)
+                )
+                new_ids.append(free_id)
+                counter += 1
+                free_id -= 1
+            warnings = []
+            for border_id in new_ids:
+                try:
+                    update_border_mwm_size_estimation(g.conn, border_id)
+                except Exception as e:
+                    warnings.append(str(e))
         g.conn.commit()
     return jsonify(status='ok', warnings=warnings)
 
@@ -303,23 +301,23 @@ def join_borders():
     region_id2 = int(request.args.get('id2'))
     if region_id1 == region_id2:
         return jsonify(status='failed to join region with itself')
-    cur = g.conn.cursor()
-    try:
-        table = config.TABLE
-        free_id = get_free_id()
-        cur.execute(f"""
-                UPDATE {table}
-                SET id = {free_id},
-                    geom = ST_Union({table}.geom, b2.geom),
-                    mwm_size_est = {table}.mwm_size_est + b2.mwm_size_est,
-                    count_k = -1
-                FROM (SELECT geom, mwm_size_est FROM {table} WHERE id = %s) AS b2
-                WHERE id = %s""", (region_id2, region_id1)
-        )
-        cur.execute(f"DELETE FROM {table} WHERE id = %s", (region_id2,))
-    except psycopg2.Error as e:
-        g.conn.rollback()
-        return jsonify(status=str(e))
+    with g.conn.cursor() as cursor:
+        try:
+            table = config.TABLE
+            free_id = get_free_id()
+            cursor.execute(f"""
+                    UPDATE {table}
+                    SET id = {free_id},
+                        geom = ST_Union({table}.geom, b2.geom),
+                        mwm_size_est = {table}.mwm_size_est + b2.mwm_size_est,
+                        count_k = -1
+                    FROM (SELECT geom, mwm_size_est FROM {table} WHERE id = %s) AS b2
+                    WHERE id = %s""", (region_id2, region_id1)
+            )
+            cursor.execute(f"DELETE FROM {table} WHERE id = %s", (region_id2,))
+        except psycopg2.Error as e:
+            g.conn.rollback()
+            return jsonify(status=str(e))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -335,7 +333,7 @@ def join_to_parent():
     parent_id = get_parent_region_id(g.conn, region_id)
     if not parent_id:
         return jsonify(status=f"Region {region_id} does not exist or has no parent")
-    cursor = g.conn.cursor()
+
     descendants = [[parent_id]]  # regions ordered by hierarchical level
 
     while True:
@@ -347,12 +345,13 @@ def join_to_parent():
             descendants.append(child_ids)
         else:
             break
-    while len(descendants) > 1:
-        lowest_ids = descendants.pop()
-        ids_str = ','.join(str(x) for x in lowest_ids)
-        cursor.execute(f"""
-            DELETE FROM {config.TABLE} WHERE id IN ({ids_str})"""
-        )
+    with g.conn.cursor() as cursor:
+        while len(descendants) > 1:
+            lowest_ids = descendants.pop()
+            ids_str = ','.join(str(x) for x in lowest_ids)
+            cursor.execute(f"""
+                DELETE FROM {config.TABLE} WHERE id IN ({ids_str})"""
+            )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -364,11 +363,11 @@ def set_parent():
     parent_id = request.args.get('parent_id')
     parent_id = int(parent_id) if parent_id else None
     table = config.TABLE
-    cursor = g.conn.cursor()
-    cursor.execute(f"""
-        UPDATE {table} SET parent_id = %s WHERE id = %s
-        """, (parent_id, region_id)
-    )
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            UPDATE {table} SET parent_id = %s WHERE id = %s
+            """, (parent_id, region_id)
+        )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -378,23 +377,24 @@ def set_parent():
 def find_osm_borders():
     lat = request.args.get('lat')
     lon = request.args.get('lon')
-    cur = g.conn.cursor()
-    cur.execute(f"""
-        SELECT osm_id, name, admin_level,
-                (CASE
-                    WHEN ST_Area(geography(way)) = 'NaN'::DOUBLE PRECISION THEN 0
-                    ELSE ST_Area(geography(way))/1E6
-                END) AS area_km
-        FROM {config.OSM_TABLE} 
-        WHERE ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326))
-        ORDER BY admin_level DESC, name ASC
-        """, (lon, lat)
-    )
-    result = []
-    for rec in cur:
-        border = {'id': rec[0], 'name': rec[1],
-                  'admin_level': rec[2], 'area': rec[3]}
-        result.append(border)
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT osm_id, name, admin_level,
+                    (CASE
+                        WHEN ST_Area(geography(way)) = 'NaN'::DOUBLE PRECISION
+                            THEN 0
+                        ELSE ST_Area(geography(way))/1E6
+                    END) AS area_km
+            FROM {config.OSM_TABLE} 
+            WHERE ST_Contains(way, ST_SetSRID(ST_Point(%s, %s), 4326))
+            ORDER BY admin_level DESC, name ASC
+            """, (lon, lat)
+        )
+        result = []
+        for osm_id, name, admin_level, area in cursor:
+            border = {'id': osm_id, 'name': name,
+                      'admin_level': admin_level, 'area': area}
+            result.append(border)
     return jsonify(borders=result)
 
 
@@ -408,19 +408,19 @@ def copy_from_osm():
     name_sql = f"'{name}'" if name else "'name'"
     table = config.TABLE
     osm_table = config.OSM_TABLE
-    cur = g.conn.cursor()
-    # Check if this id already in use
-    cur.execute(f"SELECT id FROM {table} WHERE id = %s", (osm_id,))
-    rec = cur.fetchone()
-    if rec and rec[0]:
-        return jsonify(status=f"Region with id={osm_id} already exists")
-    cur.execute(f"""
-        INSERT INTO {table} (id, geom, name, modified, count_k)
-          SELECT osm_id, way, {name_sql}, now(), -1
-          FROM {osm_table}
-          WHERE osm_id = %s
-        """, (osm_id,)
-    )
+    with g.conn.cursor() as cursor:
+        # Check if this id already in use
+        cursor.execute(f"SELECT id FROM {table} WHERE id = %s", (osm_id,))
+        rec = cursor.fetchone()
+        if rec and rec[0]:
+            return jsonify(status=f"Region with id={osm_id} already exists")
+        cursor.execute(f"""
+            INSERT INTO {table} (id, geom, name, modified, count_k)
+              SELECT osm_id, way, {name_sql}, now(), -1
+              FROM {osm_table}
+              WHERE osm_id = %s
+            """, (osm_id,)
+        )
     assign_region_to_lowest_parent(osm_id)
     warnings = []
     try:
@@ -439,9 +439,9 @@ def set_name():
     region_id = int(request.args.get('id'))
     table = config.TABLE
     new_name = request.args.get('new_name')
-    cur = g.conn.cursor()
-    cur.execute(f"UPDATE {table} SET name = %s WHERE id = %s",
-                (new_name, region_id))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"UPDATE {table} SET name = %s WHERE id = %s",
+                       (new_name, region_id))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -452,8 +452,9 @@ def delete_border():
     if config.READONLY:
         abort(405)
     region_id = int(request.args.get('id'))
-    cur = g.conn.cursor()
-    cur.execute(f"DELETE FROM {config.TABLE} WHERE id = %s", (region_id,))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"DELETE FROM {config.TABLE} WHERE id = %s",
+                       (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -464,9 +465,11 @@ def disable_border():
     if config.READONLY:
         abort(405)
     region_id = int(request.args.get('id'))
-    cur = g.conn.cursor()
-    cur.execute(f"UPDATE {config.TABLE} SET disabled = true WHERE id = %s",
-                (region_id,))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            UPDATE {config.TABLE}
+            SET disabled = true
+            WHERE id = %s""", (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -477,9 +480,11 @@ def enable_border():
     if config.READONLY:
         abort(405)
     region_id = int(request.args.get('id'))
-    cur = g.conn.cursor()
-    cur.execute(f"UPDATE {config.TABLE} SET disabled = false WHERE id = %s",
-                (region_id,))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            UPDATE {config.TABLE}
+            SET disabled = false
+            WHERE id = %s""", (region_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -489,9 +494,9 @@ def enable_border():
 def update_comment():
     region_id = int(request.form['id'])
     comment = request.form['comment']
-    cur = g.conn.cursor()
-    cur.execute(f"UPDATE {config.TABLE} SET cmnt = %s WHERE id = %s",
-                (comment, region_id))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"UPDATE {config.TABLE} SET cmnt = %s WHERE id = %s",
+                    (comment, region_id))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -523,12 +528,14 @@ def divide(preview=False):
     apply_to_similar = (request.args.get('apply_to_similar') == 'true')
     if apply_to_similar:
         if not is_admin_region:
-            return jsonify(status="Could not use 'apply to similar' for non-administrative regions")
+            return jsonify(status="Could not use 'apply to similar' "
+                                  "for non-administrative regions")
         region_ids = get_similar_regions(g.conn, region_id, only_leaves=True)
     auto_divide = (request.args.get('auto_divide') == 'true')
     if auto_divide:
         if not is_admin_region:
-            return jsonify(status="Could not apply auto-division to non-administrative regions")
+            return jsonify(status="Could not apply auto-division "
+                                  "to non-administrative regions")
         try:
             # TODO: perform mwm_size_thr field validation on client-side
             ## and move the parameter check to @validate_args_types decorator
@@ -536,16 +543,18 @@ def divide(preview=False):
         except ValueError:
             return jsonify(status="Not a number in thresholds")
         divide_into_clusters_func = (
-            divide_into_clusters_preview if preview else
-            divide_into_clusters
+            divide_into_clusters_preview
+            if preview
+            else divide_into_clusters
         )
         return divide_into_clusters_func(
                 region_ids, next_level,
                 mwm_size_thr)
     else:
         divide_into_subregions_func = (
-            divide_into_subregions_preview if preview else
-            divide_into_subregions
+            divide_into_subregions_preview
+            if preview
+            else divide_into_subregions
         )
         return divide_into_subregions_func(region_ids, next_level)
 
@@ -557,32 +566,35 @@ def chop_largest_or_farthest():
         abort(405)
     region_id = int(request.args.get('id'))
     table = config.TABLE
-    cur = g.conn.cursor()
-    cur.execute(f"""SELECT ST_NumGeometries(geom)
-                    FROM {table}
-                    WHERE id = {region_id}""")
-    res = cur.fetchone()
-    if not res or res[0] < 2:
-        return jsonify(status='border should have more than one outer ring')
-    free_id1 = get_free_id()
-    free_id2 = free_id1 - 1
-    cur.execute(f"""
-        INSERT INTO {table} (id, parent_id, name, disabled, modified, geom)
-            SELECT id, region_id, name, disabled, modified, geom FROM
-            (
-                (WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g
-                            FROM {table} WHERE id = {region_id})
-                (SELECT {free_id1} id, {region_id} region_id, name||'_main' as name, disabled,
-                        now() as modified, g as geom, ST_Area(g) as a
-                 FROM w ORDER BY a DESC LIMIT 1)
-                UNION ALL
-                SELECT {free_id2} id, {region_id} region_id, name||'_small' as name, disabled,
-                       now() as modified, ST_Collect(g) AS geom,
-                       ST_Area(ST_Collect(g)) as a
-                FROM (SELECT name, disabled, g, ST_Area(g) AS a FROM w ORDER BY a DESC OFFSET 1) ww
-                GROUP BY name, disabled)
-            ) x"""
-    )
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""SELECT ST_NumGeometries(geom)
+                           FROM {table}
+                           WHERE id = {region_id}""")
+        res = cursor.fetchone()
+        if not res or res[0] < 2:
+            return jsonify(status='border should have more than one outer ring')
+        free_id1 = get_free_id()
+        free_id2 = free_id1 - 1
+        cursor.execute(f"""
+            INSERT INTO {table} (id, parent_id, name, disabled, modified, geom)
+                SELECT id, region_id, name, disabled, modified, geom FROM
+                (
+                    (WITH w AS (SELECT name, disabled, (ST_Dump(geom)).geom AS g
+                                FROM {table} WHERE id = {region_id})
+                    (SELECT {free_id1} id, {region_id} region_id,
+                            name||'_main' as name, disabled,
+                            now() as modified, g as geom, ST_Area(g) as a
+                     FROM w ORDER BY a DESC LIMIT 1)
+                    UNION ALL
+                    SELECT {free_id2} id, {region_id} region_id,
+                           name||'_small' as name, disabled,
+                           now() as modified, ST_Collect(g) AS geom,
+                           ST_Area(ST_Collect(g)) as a
+                    FROM (SELECT name, disabled, g, ST_Area(g) AS a
+                          FROM w ORDER BY a DESC OFFSET 1) ww
+                    GROUP BY name, disabled)
+                ) x"""
+        )
     warnings = []
     for border_id in (free_id1, free_id2):
         try:
@@ -599,17 +611,18 @@ def draw_hull():
     if config.READONLY:
         abort(405)
     border_id = int(request.args.get('id'))
-    cursor = g.conn.cursor()
     table = config.TABLE
-    cursor.execute(f"SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s",
-                   (border_id,))
-    res = cursor.fetchone()
-    if not res or res[0] < 2:
-        return jsonify(status='border should have more than one outer ring')
-    cursor.execute(f"""
-        UPDATE {table} SET geom = ST_ConvexHull(geom)
-        WHERE id = %s""", (border_id,)
-    )
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT ST_NumGeometries(geom) FROM {table} WHERE id = %s
+            """, (border_id,))
+        res = cursor.fetchone()
+        if not res or res[0] < 2:
+            return jsonify(status='border should have more than one outer ring')
+        cursor.execute(f"""
+            UPDATE {table} SET geom = ST_ConvexHull(geom)
+            WHERE id = %s""", (border_id,)
+        )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -618,23 +631,25 @@ def draw_hull():
 def backup_do():
     if config.READONLY:
         abort(405)
-    cur = g.conn.cursor()
-    cur.execute(f"""SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup)
-                    FROM {config.BACKUP}""")
-    (timestamp, tsmax) = cur.fetchone()
-    if timestamp == tsmax:
-        return jsonify(status="please try again later")
-    backup_table = config.BACKUP
-    table = config.TABLE
-    cur.execute(f"""
-        INSERT INTO {backup_table}
-             (backup, id, name, parent_id, geom, disabled, count_k,
-                modified, cmnt, mwm_size_est)
-          SELECT %s, id, name, parent_id, geom, disabled, count_k,
-                modified, cmnt, mwm_size_est
-          FROM {table}
-        """, (timestamp,)
-    )
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT to_char(now(), 'IYYY-MM-DD HH24:MI'), max(backup)
+            FROM {config.BACKUP}
+            """)
+        (timestamp, tsmax) = cursor.fetchone()
+        if timestamp == tsmax:
+            return jsonify(status="please try again later")
+        backup_table = config.BACKUP
+        table = config.TABLE
+        cursor.execute(f"""
+            INSERT INTO {backup_table}
+                 (backup, id, name, parent_id, geom, disabled, count_k,
+                    modified, cmnt, mwm_size_est)
+              SELECT %s, id, name, parent_id, geom, disabled, count_k,
+                    modified, cmnt, mwm_size_est
+              FROM {table}
+            """, (timestamp,)
+        )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -644,37 +659,44 @@ def backup_restore():
     if config.READONLY:
         abort(405)
     ts = request.args.get('timestamp')
-    cur = g.conn.cursor()
     table = config.TABLE
     backup_table = config.BACKUP
-    cur.execute(f"SELECT count(1) from {backup_table} WHERE backup = %s",(ts,))
-    (count,) = cur.fetchone()
-    if count <= 0:
-        return jsonify(status="no such timestamp")
-    cur.execute(f"DELETE FROM {table}")
-    cur.execute(f"""
-        INSERT INTO {table}
-            (id, name, parent_id, geom, disabled, count_k, modified, cmnt, mwm_size_est)
-          SELECT id, name, parent_id, geom, disabled, count_k, modified, cmnt, mwm_size_est
-          FROM {backup_table}
-          WHERE backup = %s
-        """, (ts,)
-    )
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"SELECT count(1) FROM {backup_table} WHERE backup = %s",
+                       (ts,))
+        (count,) = cursor.fetchone()
+        if count <= 0:
+            return jsonify(status="no such timestamp")
+        cursor.execute(f"DELETE FROM {table}")
+        cursor.execute(f"""
+            INSERT INTO {table}
+                (id, name, parent_id, geom, disabled, count_k,
+                 modified, cmnt, mwm_size_est)
+              SELECT id, name, parent_id, geom, disabled, count_k,
+                     modified, cmnt, mwm_size_est
+              FROM {backup_table}
+              WHERE backup = %s
+            """, (ts,)
+        )
     g.conn.commit()
     return jsonify(status='ok')
 
 
 @app.route('/backlist')
 def backup_list():
-    cur = g.conn.cursor()
-    cur.execute(f"""SELECT backup, count(1)
-                    FROM {config.BACKUP}
-                    GROUP BY backup
-                    ORDER BY backup DESC""")
-    result = []
-    for res in cur:
-        result.append({'timestamp': res[0], 'text': res[0], 'count': res[1]})
-    # todo: count number of different objects for the last one
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""SELECT backup, count(1)
+                           FROM {config.BACKUP}
+                           GROUP BY backup
+                           ORDER BY backup DESC""")
+        result = []
+        for backup_name, borders_count in cursor:
+            result.append({
+                'timestamp': backup_name,
+                'text': backup_name,
+                'count': borders_count
+            })
+        # todo: count number of different objects for the last one
     return jsonify(backups=result)
 
 
@@ -683,12 +705,14 @@ def backup_delete():
     if config.READONLY:
         abort(405)
     ts = request.args.get('timestamp')
-    cur = g.conn.cursor()
-    cur.execute(f"SELECT count(1) FROM {config.BACKUP} WHERE backup = %s", (ts,))
-    (count,) = cur.fetchone()
-    if count <= 0:
-        return jsonify(status='no such timestamp')
-    cur.execute(f"DELETE FROM {config.BACKUP} WHERE backup = %s", (ts,))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT count(1) FROM {config.BACKUP} WHERE backup = %s
+            """, (ts,))
+        (count,) = cursor.fetchone()
+        if count <= 0:
+            return jsonify(status='no such timestamp')
+        cursor.execute(f"DELETE FROM {config.BACKUP} WHERE backup = %s", (ts,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -701,14 +725,10 @@ def make_osm():
     ymin = request.args.get('ymin')
     ymax = request.args.get('ymax')
     table = request.args.get('table')
-    if table in config.OTHER_TABLES:
-        table = config.OTHER_TABLES[table]
-    else:
-        table = config.TABLE
+    table = config.OTHER_TABLES.get(table, config.TABLE)
     borders = fetch_borders(
         table=table,
-        where_clause=f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
-                                          f"ST_Point({xmax}, {ymax}))"
+        where_clause=geom_inside_bbox_sql(xmin, ymin, xmax, ymax)
     )
     xml = borders_to_xml(borders)
     return Response(xml, mimetype='application/x-osm+xml')
@@ -719,26 +739,38 @@ def make_osm():
 def josm_borders_along():
     region_id = int(request.args.get('id'))
     line = request.args.get('line')
-    cursor = g.conn.cursor()
     # select all outer osm borders inside a buffer of the given line
     table = config.TABLE
     osm_table = config.OSM_TABLE
-    cursor.execute(f"""
-        WITH linestr AS (
-            SELECT ST_Intersection(geom, ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)) as line
-            FROM {table}
-            WHERE id = %s
-        ), osmborders AS (
-            SELECT (ST_Dump(way)).geom as g
-            FROM {osm_table}, linestr
-            WHERE ST_Intersects(line, way)
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            WITH linestr AS (
+                SELECT ST_Intersection(
+                        geom,
+                        ST_Buffer(ST_GeomFromText(%s, 4326), 0.2)
+                    ) as line
+                FROM {table}
+                WHERE id = %s
+            ), osmborders AS (
+                SELECT (ST_Dump(way)).geom as g
+                FROM {osm_table}, linestr
+                WHERE ST_Intersects(line, way)
+            )
+            SELECT ST_AsGeoJSON((
+                    ST_Dump(
+                        ST_LineMerge(
+                            ST_Intersection(
+                                ST_Collect(ST_ExteriorRing(g)),
+                                line
+                            )
+                        )
+                    )
+                ).geom)
+            FROM osmborders, linestr
+            GROUP BY line
+            """, (line, region_id)
         )
-        SELECT ST_AsGeoJSON((ST_Dump(ST_LineMerge(ST_Intersection(ST_Collect(ST_ExteriorRing(g)), line)))).geom)
-        FROM osmborders, linestr
-        GROUP BY line
-        """, (line, region_id)
-    )
-    xml = lines_to_xml(rec[0] for rec in cursor)
+        xml = lines_to_xml(rec[0] for rec in cursor)
     return Response(xml, mimetype='application/x-osm+xml')
 
 
@@ -815,10 +847,7 @@ def potential_parents():
                      ymin=(None, float), ymax=(None, float))
 def export_poly():
     table = request.args.get('table')
-    if table in config.OTHER_TABLES:
-        table = config.OTHER_TABLES[table]
-    else:
-        table = config.TABLE
+    table = config.OTHER_TABLES.get(table, config.TABLE)
 
     fetch_borders_args = {'table': table,  'only_leaves': True}
 
@@ -831,10 +860,8 @@ def export_poly():
         xmax = request.args.get('xmax') or 'NULL'
         ymin = request.args.get('ymin') or 'NULL'
         ymax = request.args.get('ymax') or 'NULL'
-        fetch_borders_args['where_clause'] = (
-                f"geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),"
-                                     f"ST_Point({xmax}, {ymax}))"
-        )
+        fetch_borders_args['where_clause'] = geom_inside_bbox_sql(xmin, ymin,
+                                                                  xmax, ymax)
     borders = fetch_borders(**fetch_borders_args)
 
     memory_file = io.BytesIO()
@@ -877,54 +904,61 @@ def export_poly():
 def statistics():
     group = request.args.get('group')
     table = request.args.get('table')
-    if table in config.OTHER_TABLES:
-        table = config.OTHER_TABLES[table]
-    else:
-        table = config.TABLE
-    cur = g.conn.cursor()
-    if group == 'total':
-        cur.execute(f"SELECT count(1) FROM {table}")
-        return jsonify(total=cur.fetchone()[0])
-    elif group == 'sizes':
-        cur.execute(f"""
-            SELECT name, count_k, ST_NPoints(geom), ST_AsGeoJSON(ST_Centroid(geom)),
-                (CASE
-                    WHEN ST_Area(geography(geom)) = 'NaN'::DOUBLE PRECISION THEN 0
-                    ELSE ST_Area(geography(geom))/1E6
-                 END) AS area,
-                 disabled,
-                 (CASE
-                     WHEN coalesce(cmnt, '') = '' THEN false
-                     ELSE true
-                  END) AS cmnt
-            FROM {table}"""
-        )
-        result = []
-        for res in cur:
-            coord = json.loads(res[3])['coordinates']
-            result.append({'name': res[0], 'lat': coord[1], 'lon': coord[0],
-                           'size': res[1], 'nodes': res[2], 'area': res[4],
-                           'disabled': res[5], 'commented': res[6]})
-        return jsonify(regions=result)
-    elif group == 'topo':
-        cur.execute(f"""
-            SELECT name, count(1),
-                min(
-                    CASE
-                        WHEN ST_Area(geography(g)) = 'NaN'::DOUBLE PRECISION THEN 0
-                        ELSE ST_Area(geography(g))
-                    END
-                ) / 1E6,
-                sum(ST_NumInteriorRings(g)), ST_AsGeoJSON(ST_Centroid(ST_Collect(g)))
-            FROM (SELECT name, (ST_Dump(geom)).geom AS g FROM {table}) a
-            GROUP BY name"""
-        )
-        result = []
-        for (name, outer, min_area, inner, coords) in cur:
-            coord = json.loads(coords)['coordinates']
-            result.append({'name': name, 'outer': outer, 'min_area': min_area,
-                           'inner': inner, 'lon': coord[0], 'lat': coord[1]})
-        return jsonify(regions=result)
+    table = config.OTHER_TABLES.get(table, config.TABLE)
+    with g.conn.cursor() as cursor:
+        if group == 'total':
+            cursor.execute(f"SELECT count(1) FROM {table}")
+            return jsonify(total=cursor.fetchone()[0])
+        elif group == 'sizes':
+            cursor.execute(f"""
+                SELECT
+                    name,
+                    count_k,
+                    ST_NPoints(geom),
+                    ST_AsGeoJSON(ST_Centroid(geom)),
+                    (CASE
+                        WHEN ST_Area(geography(geom)) = 'NaN'::DOUBLE PRECISION
+                            THEN 0
+                        ELSE ST_Area(geography(geom))/1E6
+                    END) AS area,
+                    disabled,
+                    (CASE
+                        WHEN coalesce(cmnt, '') = '' THEN false
+                        ELSE true
+                    END) AS cmnt
+                FROM {table}"""
+            )
+            result = []
+            for res in cursor:
+                coord = json.loads(res[3])['coordinates']
+                result.append({'name': res[0], 'lat': coord[1], 'lon': coord[0],
+                               'size': res[1], 'nodes': res[2], 'area': res[4],
+                               'disabled': res[5], 'commented': res[6]})
+            return jsonify(regions=result)
+        elif group == 'topo':
+            cursor.execute(f"""
+                SELECT
+                    name,
+                    count(1),
+                    min(
+                        CASE
+                            WHEN ST_Area(geography(g)) = 'NaN'::DOUBLE PRECISION
+                                THEN 0
+                            ELSE ST_Area(geography(g))
+                        END
+                    ) / 1E6,
+                    sum(ST_NumInteriorRings(g)),
+                    ST_AsGeoJSON(ST_Centroid(ST_Collect(g)))
+                FROM (SELECT name, (ST_Dump(geom)).geom AS g FROM {table}) a
+                GROUP BY name"""
+            )
+            result = []
+            for (name, outer, min_area, inner, coords) in cursor:
+                coord = json.loads(coords)['coordinates']
+                result.append({'name': name, 'outer': outer,
+                               'min_area': min_area, 'inner': inner,
+                               'lon': coord[0], 'lat': coord[1]})
+            return jsonify(regions=result)
     return jsonify(status='wrong group id')
 
 
@@ -954,8 +988,8 @@ def start_over():
         return jsonify(status=str(e))
 
     autosplit_table = config.AUTOSPLIT_TABLE
-    cursor = g.conn.cursor()
-    cursor.execute(f"DELETE FROM {autosplit_table}")
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"DELETE FROM {autosplit_table}")
     g.conn.commit()
     return jsonify(status='ok', warnings=warnings[:10])
 

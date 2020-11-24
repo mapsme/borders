@@ -257,8 +257,8 @@ class CountryStructureException(Exception):
 
 
 def _clear_borders(conn):
-    cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {table}")
+    with conn.cursor() as cursor:
+        cursor.execute(f"DELETE FROM {table}")
     conn.commit()
 
 
@@ -281,7 +281,6 @@ def _create_regions(conn, osm_ids, regions):
     if not osm_ids:
         return
     osm_ids = list(osm_ids)  # to ensure order
-    cursor = conn.cursor()
     sql_values = ','.join(
             f'({osm_id},'
             '%s,'
@@ -291,14 +290,13 @@ def _create_regions(conn, osm_ids, regions):
             'now())'
             for osm_id in osm_ids
     )
-    #print(f"create regions with osm_ids={osm_ids}")
-    #print(f"names={tuple(names[osm_id] for osm_id in osm_ids)}")
-    #print(f"all parents={parents}")
-    cursor.execute(f"""
-        INSERT INTO {table} (id, name, parent_id, mwm_size_est, geom, modified)
-        VALUES {sql_values}
-        """, tuple(regions[osm_id]['name'] for osm_id in osm_ids)
-    )
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            INSERT INTO {table} (id, name, parent_id, mwm_size_est,
+                                 geom, modified)
+            VALUES {sql_values}
+            """, tuple(regions[osm_id]['name'] for osm_id in osm_ids)
+        )
 
 
 def _make_country_structure(conn, country_osm_id):
@@ -339,48 +337,47 @@ def _make_country_structure(conn, country_osm_id):
 
 def create_countries_initial_structure(conn):
     _clear_borders(conn)
-    cursor = conn.cursor()
-    # TODO: process overlapping countries, like Ukraine and Russia with common Crimea
-    cursor.execute(f"""
-        SELECT osm_id, name
-        FROM {osm_table}
-        WHERE admin_level = 2 and name != 'Ukraine'
-        """
-        #  and name in --('Germany', 'Luxembourg', 'Austria')
-        #    ({','.join(f"'{c}'" for c in country_initial_levels.keys())})
-        #"""
-    )
-    warnings = []
-    for rec in cursor:
-        warning = _make_country_structure(conn, rec[0])
-        if warning:
-            warnings.append(warning)
+    with conn.cursor() as cursor:
+        # TODO: process overlapping countries, like Ukraine and Russia with common Crimea
+        cursor.execute(f"""
+            SELECT osm_id, name
+            FROM {osm_table}
+            WHERE admin_level = 2 and name != 'Ukraine'
+            """
+        )
+        warnings = []
+        for rec in cursor:
+            warning = _make_country_structure(conn, rec[0])
+            if warning:
+                warnings.append(warning)
     conn.commit()
     return warnings
 
 
 def get_osm_border_name_by_osm_id(conn, osm_id):
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT name FROM {osm_table}
-        WHERE osm_id = %s
-        """, (osm_id,))
-    rec = cursor.fetchone()
-    if not rec:
-        raise CountryStructureException(f'Not found region with osm_id="{osm_id}"')
-    return rec[0]
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT name FROM {osm_table}
+            WHERE osm_id = %s
+            """, (osm_id,))
+        rec = cursor.fetchone()
+        if not rec:
+            raise CountryStructureException(
+                f'Not found region with osm_id="{osm_id}"'
+            )
+        return rec[0]
 
 
 def _get_country_osm_id_by_name(conn, name):
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT osm_id FROM {osm_table}
-        WHERE admin_level = 2 AND name = %s
-        """, (name,))
-    row_count = cursor.rowcount
-    if row_count > 1:
-        raise CountryStructureException(f'More than one country "{name}"')
-    rec = cursor.fetchone()
-    if not rec:
-        raise CountryStructureException(f'Not found country "{name}"')
-    return int(rec[0])
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT osm_id FROM {osm_table}
+            WHERE admin_level = 2 AND name = %s
+            """, (name,))
+        row_count = cursor.rowcount
+        if row_count > 1:
+            raise CountryStructureException(f'More than one country "{name}"')
+        rec = cursor.fetchone()
+        if not rec:
+            raise CountryStructureException(f'Not found country "{name}"')
+        return int(rec[0])
