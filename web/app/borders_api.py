@@ -142,7 +142,7 @@ def query_bbox():
     borders = fetch_borders(
         table=borders_table,
         simplify=simplify,
-        where_clause=geom_inside_bbox_sql(xmin, ymin, xmax, ymax)
+        where_clause=geom_intersects_bbox_sql(xmin, ymin, xmax, ymax)
     )
     return jsonify(
         status='ok',
@@ -166,7 +166,7 @@ def query_small_in_bbox():
             FROM (
                 SELECT id, name, (ST_Dump(geom)).geom AS ring
                 FROM {borders_table}
-                WHERE {geom_inside_bbox_sql(xmin, ymin, xmax, ymax)}
+                WHERE {geom_intersects_bbox_sql(xmin, ymin, xmax, ymax)}
             ) g
             WHERE ST_Area(geography(ring))/1E6 < %s
             """, (config.SMALL_KM2,)
@@ -729,7 +729,7 @@ def make_osm():
     borders_table = config.OTHER_TABLES.get(borders_table, config.BORDERS_TABLE)
     borders = fetch_borders(
         table=borders_table,
-        where_clause=geom_inside_bbox_sql(xmin, ymin, xmax, ymax)
+        where_clause=geom_intersects_bbox_sql(xmin, ymin, xmax, ymax)
     )
     xml = borders_to_xml(borders)
     return Response(xml, mimetype='application/x-osm+xml')
@@ -860,8 +860,8 @@ def export_poly():
         xmax = request.args.get('xmax') or 'NULL'
         ymin = request.args.get('ymin') or 'NULL'
         ymax = request.args.get('ymax') or 'NULL'
-        fetch_borders_args['where_clause'] = geom_inside_bbox_sql(xmin, ymin,
-                                                                  xmax, ymax)
+        fetch_borders_args['where_clause'] = geom_intersects_bbox_sql(xmin, ymin,
+                                                                      xmax, ymax)
     borders = fetch_borders(**fetch_borders_args)
 
     memory_file = io.BytesIO()

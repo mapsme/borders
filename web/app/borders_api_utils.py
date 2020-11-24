@@ -13,7 +13,7 @@ from subregions import (
 )
 
 
-def geom_inside_bbox_sql(xmin, ymin, xmax, ymax):
+def geom_intersects_bbox_sql(xmin, ymin, xmax, ymax):
     return (f'(geom && ST_MakeBox2D(ST_Point({xmin}, {ymin}),'
                                   f'ST_Point({xmax}, {ymax})))')
 
