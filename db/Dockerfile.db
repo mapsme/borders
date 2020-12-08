@@ -1,0 +1,35 @@
+FROM postgres:12
+
+WORKDIR /borders/
+
+RUN apt-get update && apt-get install -y \
+    wget \
+    postgresql-contrib  `# contains hstore extension` \
+    postgresql-12-postgis-3 \
+    osmctools \
+    osm2pgsql \
+    python3 \
+    python3-psycopg2
+
+ARG PLANET_URL=${PLANET_URL}
+
+ENV PLANET=planet-file
+
+RUN wget "${PLANET_URL}" -O "${PLANET}"
+
+ENV FILTERED_PLANET=${PLANET}-filtered.o5m
+
+COPY prepare_borders.sh tiles2pg.py prepare_tiles.sh ./
+RUN ["/bin/bash", "prepare_borders.sh"]
+RUN ["/bin/bash", "prepare_tiles.sh"]
+
+RUN chmod a+w /borders/
+
+COPY init_databases.sh /docker-entrypoint-initdb.d/00-init_databases.sh
+COPY create_extensions.sql /docker-entrypoint-initdb.d/01-create_extensions.sql
+COPY load_borders.sh /docker-entrypoint-initdb.d/10-load_borders.sh
+COPY create_tables.sql /docker-entrypoint-initdb.d/20-create_tables.sql
+COPY load_tiles.sh /docker-entrypoint-initdb.d/30-load_tiles.sh
+COPY create_osm_places_table.sql /docker-entrypoint-initdb.d/40-create_osm_places_table.sql
+COPY load_osm_places_table.sh /docker-entrypoint-initdb.d/41-load_osm_places_table.sh
+
