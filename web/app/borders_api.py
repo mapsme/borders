@@ -413,31 +413,11 @@ def find_osm_borders():
 def copy_from_osm():
     osm_id = int(request.args.get('id'))
     name = request.args.get('name')
-    name_sql = f"'{name}'" if name else "'name'"
-    borders_table = config.BORDERS_TABLE
-    osm_table = config.OSM_TABLE
-    with g.conn.cursor() as cursor:
-        # Check if this id already in use
-        cursor.execute(f"SELECT id FROM {borders_table} WHERE id = %s",
-                       (osm_id,))
-        rec = cursor.fetchone()
-        if rec and rec[0]:
-            return jsonify(status=f"Region with id={osm_id} already exists")
-        cursor.execute(f"""
-            INSERT INTO {borders_table} (id, geom, name, modified, count_k)
-              SELECT osm_id, way, {name_sql}, now(), -1
-              FROM {osm_table}
-              WHERE osm_id = %s
-            """, (osm_id,)
-        )
-    assign_region_to_lowest_parent(osm_id)
-    warnings = []
-    try:
-        update_border_mwm_size_estimation(g.conn, osm_id)
-    except Exception as e:
-        warnings.append(str(e))
+    success = copy_region_from_osm(g.conn, osm_id, name)
+    if not success:
+        return jsonify(status=f"Region with id={osm_id} already exists")
     g.conn.commit()
-    return jsonify(status='ok', warnings=warnings)
+    return jsonify(status='ok')
 
 
 @app.route('/rename')
@@ -983,7 +963,7 @@ def border():
 @app.route('/start_over')
 def start_over():
     try:
-        warnings = create_countries_initial_structure(g.conn)
+        create_countries_initial_structure(g.conn)
     except CountryStructureException as e:
         return jsonify(status=str(e))
 
@@ -991,7 +971,7 @@ def start_over():
     with g.conn.cursor() as cursor:
         cursor.execute(f"DELETE FROM {autosplit_table}")
     g.conn.commit()
-    return jsonify(status='ok', warnings=warnings[:10])
+    return jsonify(status='ok')
 
 
 if __name__ == '__main__':

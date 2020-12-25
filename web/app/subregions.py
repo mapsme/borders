@@ -88,6 +88,8 @@ def _add_population_data(conn, subregions, need_cities):
 
 
 def _add_mwm_size_estimation(subregions):
+    if not subregions:
+        return
     subregions_sorted = [
         (
             s_id,
@@ -245,7 +247,7 @@ def get_similar_regions(conn, region_id, only_leaves=False):
         if item['admin_level'] == admin_level:
             similar_region_ids.append(item['id'])
         elif item['admin_level'] < admin_level:
-            children = find_osm_child_regions(item['id'])
+            children = find_osm_child_regions(conn, item['id'])
             for ch in children:
                 q.put(ch)
     if only_leaves:
