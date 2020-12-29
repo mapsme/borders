@@ -143,8 +143,9 @@ def get_clusters_for_preview_one(region_id, next_level, mwm_size_thr):
     where_clause = f"""
         osm_border_id = %s
         AND mwm_size_thr = %s
+        AND next_level = %s
         """
-    splitting_sql_params = (region_id, mwm_size_thr)
+    splitting_sql_params = (region_id, mwm_size_thr, next_level)
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT 1 FROM {autosplit_table}
@@ -231,9 +232,9 @@ def divide_region_into_subregions(conn, region_id, next_level):
             cursor.execute(f"""
                 INSERT INTO {borders_table}
                     (id, geom, name, parent_id, modified, count_k, mwm_size_est)
-                SELECT osm_id, way, name, {parent_id}, now(), -1, {mwm_size_est}
+                SELECT osm_id, way, name, {parent_id}, now(), -1, %s
                 FROM {osm_table}
-                WHERE osm_id  = %s""", (subregion_id,)
+                WHERE osm_id  = %s""", (mwm_size_est, subregion_id,)
             )
         if not is_admin_region:
             cursor.execute(f"DELETE FROM {borders_table} WHERE id = %s", (region_id,))
@@ -251,8 +252,9 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
         where_clause = f"""
             osm_border_id = %s
             AND mwm_size_thr = %s
+            AND next_level = %s
             """
-        splitting_sql_params = (region_id, mwm_size_thr)
+        splitting_sql_params = (region_id, mwm_size_thr, next_level)
         cursor.execute(f"""
             SELECT 1 FROM {autosplit_table}
             WHERE {where_clause}
@@ -269,24 +271,32 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
             """, splitting_sql_params
         )
         if cursor.rowcount == 1:
-            continue
-        for rec in cursor:
-            subregion_ids = rec[0]
-            cluster_id = subregion_ids[0]
-            if len(subregion_ids) == 1:
-                subregion_id = cluster_id
-                name = get_osm_border_name_by_osm_id(g.conn, subregion_id)
-            else:
-                counter += 1
-                free_id -= 1
-                subregion_id = free_id
-                name = f"{base_name}_{counter}"
             insert_cursor.execute(f"""
-                INSERT INTO {borders_table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
-                SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1, mwm_size_est
-                FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
-                """, (name, cluster_id,) + splitting_sql_params
-            )
+                UPDATE {borders_table}
+                SET modified = now(),
+                    mwm_size_est = (SELECT mwm_size_est
+                                    FROM {autosplit_table}
+                                    WHERE {where_clause})
+                WHERE id = {region_id}
+                """, splitting_sql_params)
+        else:
+            for rec in cursor:
+                subregion_ids = rec[0]
+                cluster_id = subregion_ids[0]
+                if len(subregion_ids) == 1:
+                    subregion_id = cluster_id
+                    name = get_osm_border_name_by_osm_id(g.conn, subregion_id)
+                else:
+                    counter += 1
+                    free_id -= 1
+                    subregion_id = free_id
+                    name = f"{base_name}_{counter}"
+                insert_cursor.execute(f"""
+                    INSERT INTO {borders_table} (id, name, parent_id, geom, modified, count_k, mwm_size_est)
+                    SELECT {subregion_id}, %s, osm_border_id, geom, now(), -1, mwm_size_est
+                    FROM {autosplit_table} WHERE subregion_ids[1] = %s AND {where_clause}
+                    """, (name, cluster_id,) + splitting_sql_params
+                )
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -393,13 +403,16 @@ def find_potential_parents(region_id):
 
 
 def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed'):
+    errors, warnings = [], []
     borders_table = main_borders_table
     with conn.cursor() as cursor:
         # Check if this id already in use
-        cursor.execute(f"SELECT id FROM {borders_table} WHERE id = %s",
+        cursor.execute(f"SELECT name FROM {borders_table} WHERE id = %s",
                        (region_id,))
         if cursor.rowcount > 0:
-            return False
+            name = cursor.fetchone()[0]
+            errors.append(f"Region with id={region_id} already exists under name '{name}'")
+            return errors, warnings
 
         name_expr = f"'{name}'" if name else "name"
         parent_id_expr = f"{parent_id}" if isinstance(parent_id, int) else "NULL"
@@ -413,8 +426,11 @@ def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed'):
         )
         if parent_id == 'not_passed':
             assign_region_to_lowest_parent(conn, region_id)
-        update_border_mwm_size_estimation(conn, region_id)
-        return True
+        try:
+            update_border_mwm_size_estimation(conn, region_id)
+        except Exception as e:
+            warnings.append(str(e))
+        return errors, warnings
 
 
 def get_osm_border_name_by_osm_id(conn, osm_id):

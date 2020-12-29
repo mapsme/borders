@@ -413,11 +413,11 @@ def find_osm_borders():
 def copy_from_osm():
     osm_id = int(request.args.get('id'))
     name = request.args.get('name')
-    success = copy_region_from_osm(g.conn, osm_id, name)
-    if not success:
-        return jsonify(status=f"Region with id={osm_id} already exists")
+    errors, warnings = copy_region_from_osm(g.conn, osm_id, name)
+    if errors:
+        return jsonify(status='\n'.join(errors))
     g.conn.commit()
-    return jsonify(status='ok')
+    return jsonify(status='ok', warnings=warnings)
 
 
 @app.route('/rename')

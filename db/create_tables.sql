@@ -38,6 +38,7 @@ CREATE TABLE splitting (
     subregion_ids BIGINT[] NOT NULL,
     mwm_size_est REAL NOT NULL,
     mwm_size_thr INTEGER NOT NULL, -- mwm size threshold in Kb, 4-bytes INTEGER is enough
+    next_level INTEGER NOT NULL,
     geom geometry NOT NULL
 );
-CREATE INDEX splitting_idx ON splitting (osm_border_id, mwm_size_thr);
+CREATE INDEX splitting_idx ON splitting (osm_border_id, mwm_size_thr, next_level);
