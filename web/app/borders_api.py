@@ -321,10 +321,10 @@ def join_borders():
     with g.conn.cursor() as cursor:
         try:
             borders_table = config.BORDERS_TABLE
-            free_id = get_free_id()
+            joint_id = get_free_id()
             cursor.execute(f"""
                     UPDATE {borders_table}
-                    SET id = {free_id},
+                    SET id = {joint_id},
                         geom = ST_Union({borders_table}.geom, b2.geom),
                         mwm_size_est = {borders_table}.mwm_size_est + b2.mwm_size_est,
                         count_k = -1
@@ -335,6 +335,26 @@ def join_borders():
         except psycopg2.Error as e:
             g.conn.rollback()
             return jsonify(status=str(e))
+
+        # If joint_id is the only child of its parent, then leave only parent
+        parent_id = get_parent_region_id(g.conn, joint_id)
+        if parent_id is not None:
+            cursor.execute(f"""
+                SELECT count(*) FROM {borders_table} WHERE parent_id = %s
+                """, (parent_id,)
+            )
+            children_cnt = cursor.fetchone()[0]
+            if children_cnt == 1:
+                cursor.execute(f"""
+                    UPDATE {borders_table}
+                    SET mwm_size_est = (SELECT mwm_size_est
+                                        FROM {borders_table}
+                                        WHERE id = %s)
+                    WHERE id = %s
+                    """, (joint_id, parent_id)
+                )
+                cursor.execute(f"DELETE FROM {borders_table} WHERE id = %s",
+                               (joint_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
