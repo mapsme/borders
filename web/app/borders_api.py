@@ -218,17 +218,22 @@ def get_server_configuration():
                    mwm_size_thr=config.MWM_SIZE_THRESHOLD)
 
 
+def prepare_sql_search_string(string):
+    if string.startswith('^'):
+        string = string[1:]
+    else:
+        string = f"%{string}"
+    if string.endswith('$'):
+        string = string[:-1]
+    else:
+        string = f"{string}%"
+    return string
+
+
 @app.route('/search')
 def search():
     query = request.args.get('q')
-    if query.startswith('^'):
-        query = query[1:]
-    else:
-        query = f"%{query}"
-    if query.endswith('$'):
-        query = query[:-1]
-    else:
-        query = f"{query}%"
+    sql_search_string = prepare_sql_search_string(query)
 
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
@@ -236,7 +241,7 @@ def search():
             FROM {config.BORDERS_TABLE}
             WHERE name ILIKE %s
             ORDER BY (ST_Area(geography(geom)))
-            LIMIT 1""", (query,)
+            LIMIT 1""", (sql_search_string,)
         )
         if cursor.rowcount > 0:
             rec = cursor.fetchone()

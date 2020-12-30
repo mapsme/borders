@@ -43,7 +43,7 @@ def create_countries_initial_structure(conn):
     with conn.cursor() as cursor:
         # TODO: process overlapping countries, like Ukraine and Russia with common Crimea
         cursor.execute(f"""
-            SELECT osm_id, name
+            SELECT osm_id
             FROM {osm_table}
             WHERE admin_level = 2
             """
