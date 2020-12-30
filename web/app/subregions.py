@@ -3,10 +3,9 @@ from queue import Queue
 
 from config import (
     BORDERS_TABLE as borders_table,
+    MWM_SIZE_PREDICTION_MODEL_LIMITATIONS,
     OSM_TABLE as osm_table,
     OSM_PLACES_TABLE as osm_places_table,
-
-    MWM_SIZE_PREDICTION_MODEL_LIMITATIONS,
 )
 from mwm_size_predictor import MwmSizePredictor
 
@@ -21,18 +20,19 @@ def get_subregions_info(conn, region_id, region_table,
     :return: dict {subregion_id => subregion data} including area and population info
     """
     subregions = _get_subregions_basic_info(conn, region_id, region_table,
-                                            next_level, need_cities)
+                                            next_level)
     _add_mwm_size_estimation(conn, subregions, need_cities)
     keys = ('name', 'mwm_size_est')
     if need_cities:
         keys = keys + ('cities',)
-    return {subregion_id: {k: subregion_data.get(k) for k in keys}
+    return {subregion_id: {k: subregion_data[k] for k in keys
+                                if k in subregion_data}
             for subregion_id, subregion_data in subregions.items()
     }
 
 
 def _get_subregions_basic_info(conn, region_id, region_table,
-                               next_level, need_cities):
+                               next_level):
     cursor = conn.cursor()
     region_id_column, region_geom_column = (
         ('id', 'geom') if region_table == borders_table else

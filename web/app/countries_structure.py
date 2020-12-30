@@ -8,10 +8,6 @@ from config import (
     OSM_TABLE as osm_table
 )
 from countries_division import country_initial_levels
-from subregions import (
-    get_subregions_info,
-    update_border_mwm_size_estimation,
-)
 
 
 class CountryStructureException(Exception):
