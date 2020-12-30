@@ -221,13 +221,22 @@ def get_server_configuration():
 @app.route('/search')
 def search():
     query = request.args.get('q')
+    if query.startswith('^'):
+        query = query[1:]
+    else:
+        query = f"%{query}"
+    if query.endswith('$'):
+        query = query[:-1]
+    else:
+        query = f"{query}%"
+
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom)
             FROM {config.BORDERS_TABLE}
             WHERE name ILIKE %s
             ORDER BY (ST_Area(geography(geom)))
-            LIMIT 1""", (f'%{query}%',)
+            LIMIT 1""", (query,)
         )
         if cursor.rowcount > 0:
             rec = cursor.fetchone()
