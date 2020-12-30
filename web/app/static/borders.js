@@ -316,8 +316,9 @@ function selectLayer(e) {
         $('#b_size').text(
             Math.round(props['count_k'] * BYTES_FOR_NODE / 1024 / 1024) + ' MB'
         );
-        $('#pa_size').text(Math.round(props['mwm_size_est'] / 1024) + ' MB');
-        //$('#b_nodes').text(borders[selectedId].layer.getLatLngs()[0].length);
+        var mwm_size_est = props['mwm_size_est'];
+        var mwm_size_est_text = mwm_size_est === null ? '-' : Math.round(props['mwm_size_est']/1024) + ' MB';
+        $('#pa_size').text(mwm_size_est_text);
         $('#b_nodes').text(props['nodes']);
         $('#b_date').text(props['modified']);
         $('#b_area').text(L.Util.formatNum(props['area'] / 1000000, 2));
@@ -1114,7 +1115,7 @@ function bDivideDrawPreview(response) {
     var show_divide_button = (subregions.features.length > 1);
     if (clusters) {
         subregions_count_text += ', ' + clusters.features.length + ' кластеров';
-        show_divide_button = (clusters.features.length > 1);
+        show_divide_button = (clusters.features.length > 0);
     }
     $('#d_count').text(subregions_count_text).show();
     if (show_divide_button)

@@ -218,16 +218,30 @@ def get_server_configuration():
                    mwm_size_thr=config.MWM_SIZE_THRESHOLD)
 
 
+def prepare_sql_search_string(string):
+    if string.startswith('^'):
+        string = string[1:]
+    else:
+        string = f"%{string}"
+    if string.endswith('$'):
+        string = string[:-1]
+    else:
+        string = f"{string}%"
+    return string
+
+
 @app.route('/search')
 def search():
     query = request.args.get('q')
+    sql_search_string = prepare_sql_search_string(query)
+
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom)
             FROM {config.BORDERS_TABLE}
             WHERE name ILIKE %s
             ORDER BY (ST_Area(geography(geom)))
-            LIMIT 1""", (f'%{query}%',)
+            LIMIT 1""", (sql_search_string,)
         )
         if cursor.rowcount > 0:
             rec = cursor.fetchone()
@@ -312,10 +326,10 @@ def join_borders():
     with g.conn.cursor() as cursor:
         try:
             borders_table = config.BORDERS_TABLE
-            free_id = get_free_id()
+            joint_id = get_free_id()
             cursor.execute(f"""
                     UPDATE {borders_table}
-                    SET id = {free_id},
+                    SET id = {joint_id},
                         geom = ST_Union({borders_table}.geom, b2.geom),
                         mwm_size_est = {borders_table}.mwm_size_est + b2.mwm_size_est,
                         count_k = -1
@@ -326,6 +340,26 @@ def join_borders():
         except psycopg2.Error as e:
             g.conn.rollback()
             return jsonify(status=str(e))
+
+        # If joint_id is the only child of its parent, then leave only parent
+        parent_id = get_parent_region_id(g.conn, joint_id)
+        if parent_id is not None:
+            cursor.execute(f"""
+                SELECT count(*) FROM {borders_table} WHERE parent_id = %s
+                """, (parent_id,)
+            )
+            children_cnt = cursor.fetchone()[0]
+            if children_cnt == 1:
+                cursor.execute(f"""
+                    UPDATE {borders_table}
+                    SET mwm_size_est = (SELECT mwm_size_est
+                                        FROM {borders_table}
+                                        WHERE id = %s)
+                    WHERE id = %s
+                    """, (joint_id, parent_id)
+                )
+                cursor.execute(f"DELETE FROM {borders_table} WHERE id = %s",
+                               (joint_id,))
     g.conn.commit()
     return jsonify(status='ok')
 
@@ -413,29 +447,9 @@ def find_osm_borders():
 def copy_from_osm():
     osm_id = int(request.args.get('id'))
     name = request.args.get('name')
-    name_sql = f"'{name}'" if name else "'name'"
-    borders_table = config.BORDERS_TABLE
-    osm_table = config.OSM_TABLE
-    with g.conn.cursor() as cursor:
-        # Check if this id already in use
-        cursor.execute(f"SELECT id FROM {borders_table} WHERE id = %s",
-                       (osm_id,))
-        rec = cursor.fetchone()
-        if rec and rec[0]:
-            return jsonify(status=f"Region with id={osm_id} already exists")
-        cursor.execute(f"""
-            INSERT INTO {borders_table} (id, geom, name, modified, count_k)
-              SELECT osm_id, way, {name_sql}, now(), -1
-              FROM {osm_table}
-              WHERE osm_id = %s
-            """, (osm_id,)
-        )
-    assign_region_to_lowest_parent(osm_id)
-    warnings = []
-    try:
-        update_border_mwm_size_estimation(g.conn, osm_id)
-    except Exception as e:
-        warnings.append(str(e))
+    errors, warnings = copy_region_from_osm(g.conn, osm_id, name)
+    if errors:
+        return jsonify(status='\n'.join(errors))
     g.conn.commit()
     return jsonify(status='ok', warnings=warnings)
 
@@ -983,7 +997,7 @@ def border():
 @app.route('/start_over')
 def start_over():
     try:
-        warnings = create_countries_initial_structure(g.conn)
+        create_countries_initial_structure(g.conn)
     except CountryStructureException as e:
         return jsonify(status=str(e))
 
@@ -991,7 +1005,7 @@ def start_over():
     with g.conn.cursor() as cursor:
         cursor.execute(f"DELETE FROM {autosplit_table}")
     g.conn.commit()
-    return jsonify(status='ok', warnings=warnings[:10])
+    return jsonify(status='ok')
 
 
 if __name__ == '__main__':

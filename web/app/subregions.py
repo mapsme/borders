@@ -3,6 +3,7 @@ from queue import Queue
 
 from config import (
     BORDERS_TABLE as borders_table,
+    MWM_SIZE_PREDICTION_MODEL_LIMITATIONS,
     OSM_TABLE as osm_table,
     OSM_PLACES_TABLE as osm_places_table,
 )
@@ -19,19 +20,19 @@ def get_subregions_info(conn, region_id, region_table,
     :return: dict {subregion_id => subregion data} including area and population info
     """
     subregions = _get_subregions_basic_info(conn, region_id, region_table,
-                                            next_level, need_cities)
-    _add_population_data(conn, subregions, need_cities)
-    _add_mwm_size_estimation(subregions)
+                                            next_level)
+    _add_mwm_size_estimation(conn, subregions, need_cities)
     keys = ('name', 'mwm_size_est')
     if need_cities:
         keys = keys + ('cities',)
-    return {subregion_id: {k: subregion_data[k] for k in keys}
+    return {subregion_id: {k: subregion_data[k] for k in keys
+                                if k in subregion_data}
             for subregion_id, subregion_data in subregions.items()
     }
 
 
 def _get_subregions_basic_info(conn, region_id, region_table,
-                               next_level, need_cities):
+                               next_level):
     cursor = conn.cursor()
     region_id_column, region_geom_column = (
         ('id', 'geom') if region_table == borders_table else
@@ -51,98 +52,109 @@ def _get_subregions_basic_info(conn, region_id, region_table,
             'osm_id': rec[0],
             'name': rec[1],
             'area': rec[2],
-            'urban_pop': 0,
-            'city_cnt': 0,
-            'hamlet_cnt': 0
         }
-        if need_cities:
-            subregion_data['cities'] = []
         subregions[rec[0]] = subregion_data
     return subregions
 
 
 def _add_population_data(conn, subregions, need_cities):
-    if not subregions:
+    """Adds population data only for subregions that are suitable
+    for mwm size estimation.
+    """
+    subregion_ids = [
+        s_id for s_id, s_data in subregions.items()
+        if s_data['area'] <= MWM_SIZE_PREDICTION_MODEL_LIMITATIONS['area']
+    ]
+    if not subregion_ids:
         return
-    cursor = conn.cursor()
-    subregion_ids = ','.join(str(x) for x in subregions.keys())
-    cursor.execute(f"""
-        SELECT b.osm_id, p.name, coalesce(p.population, 0), p.place
-        FROM {osm_table} b, {osm_places_table} p
-        WHERE b.osm_id IN ({subregion_ids})
-            AND ST_Contains(b.way, p.center)
-        """
-    )
-    for subregion_id, place_name, place_population, place_type in cursor:
-        subregion_data = subregions[subregion_id]
-        if place_type in ('city', 'town'):
-            subregion_data['city_cnt'] += 1
-            subregion_data['urban_pop'] += place_population
-            if need_cities:
-                subregion_data['cities'].append({
-                    'name': place_name,
-                    'population': place_population
-                })
-        else:
-            subregion_data['hamlet_cnt'] += 1
+
+    for subregion_id, data in subregions.items():
+        data.update({
+            'urban_pop': 0,
+            'city_cnt': 0,
+            'hamlet_cnt': 0
+        })
+        if need_cities:
+            data['cities'] = []
+
+    subregion_ids_str = ','.join(str(x) for x in subregion_ids)
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT b.osm_id, p.name, coalesce(p.population, 0), p.place
+            FROM {osm_table} b, {osm_places_table} p
+            WHERE b.osm_id IN ({subregion_ids_str})
+                AND ST_Contains(b.way, p.center)
+            """
+        )
+        for subregion_id, place_name, place_population, place_type in cursor:
+            subregion_data = subregions[subregion_id]
+            if place_type in ('city', 'town'):
+                subregion_data['city_cnt'] += 1
+                subregion_data['urban_pop'] += place_population
+                if need_cities:
+                    subregion_data['cities'].append({
+                        'name': place_name,
+                        'population': place_population
+                    })
+            else:
+                subregion_data['hamlet_cnt'] += 1
 
 
-def _add_mwm_size_estimation(subregions):
-    subregions_sorted = [
+def _add_mwm_size_estimation(conn, subregions, need_cities):
+    for subregion_data in subregions.values():
+        subregion_data['mwm_size_est'] = None
+
+    _add_population_data(conn, subregions, need_cities)
+
+    subregions_to_predict = [
         (
             s_id,
-            [subregions[s_id][f] for f in
-                ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt')]
+            [subregions[s_id][f] for f in MwmSizePredictor.factors]
         )
         for s_id in sorted(subregions.keys())
+            if all(subregions[s_id].get(f) is not None and
+                   subregions[s_id][f] <=
+                        MWM_SIZE_PREDICTION_MODEL_LIMITATIONS[f]
+                   for f in MwmSizePredictor.factors)
     ]
 
-    feature_array = [x[1] for x in subregions_sorted]
+    if not subregions_to_predict:
+        return
+
+    feature_array = [x[1] for x in subregions_to_predict]
     predictions = MwmSizePredictor.predict(feature_array)
 
     for subregion_id, mwm_size_prediction in zip(
-        (x[0] for x in subregions_sorted),
+        (x[0] for x in subregions_to_predict),
         predictions
     ):
         subregions[subregion_id]['mwm_size_est'] = mwm_size_prediction
 
 
 def update_border_mwm_size_estimation(conn, border_id):
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT name, ST_Area(geography(geom))/1.0E+6 area
-        FROM {borders_table}
-        WHERE id = %s""", (border_id, ))
-    name, area = cursor.fetchone()
-    if math.isnan(area):
-        raise Exception(f"Area is NaN for border '{name}' ({border_id})")
-    border_data = {
-        'area': area,
-        'urban_pop': 0,
-        'city_cnt': 0,
-        'hamlet_cnt': 0
-    }
-    cursor.execute(f"""
-        SELECT coalesce(p.population, 0), p.place
-        FROM {borders_table} b, {osm_places_table} p
-        WHERE b.id = %s
-            AND ST_Contains(b.geom, p.center)
-        """, (border_id, ))
-    for place_population, place_type in cursor:
-        if place_type in ('city', 'town'):
-            border_data['city_cnt'] += 1
-            border_data['urban_pop'] += place_population
-        else:
-            border_data['hamlet_cnt'] += 1
-
-    feature_array = [
-        border_data[f] for f in
-        ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt')
-    ]
-    mwm_size_est = MwmSizePredictor.predict(feature_array)
-    cursor.execute(f"UPDATE {borders_table} SET mwm_size_est = %s WHERE id = %s",
-                   (mwm_size_est, border_id))
-    conn.commit()
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT name, ST_Area(geography(geom))/1.0E+6 area
+            FROM {borders_table}
+            WHERE id = %s""", (border_id,))
+        name, area = cursor.fetchone()
+        if math.isnan(area):
+            e = Exception(f"Area is NaN for border '{name}' ({border_id})")
+            raise e
+        border_data = {
+            'area': area,
+        }
+        regions = {border_id: border_data}
+        _add_mwm_size_estimation(conn, regions, need_cities=False)
+        mwm_size_est = border_data.get('mwm_size_est')
+        # mwm_size_est may be None. Python's None is converted to NULL
+        # duging %s substitution in execute().
+        cursor.execute(f"""
+            UPDATE {borders_table}
+            SET mwm_size_est = %s
+            WHERE id = %s
+            """, (mwm_size_est, border_id,))
+        conn.commit()
 
 
 def is_administrative_region(conn, region_id):
@@ -245,7 +257,7 @@ def get_similar_regions(conn, region_id, only_leaves=False):
         if item['admin_level'] == admin_level:
             similar_region_ids.append(item['id'])
         elif item['admin_level'] < admin_level:
-            children = find_osm_child_regions(item['id'])
+            children = find_osm_child_regions(conn, item['id'])
             for ch in children:
                 q.put(ch)
     if only_leaves:

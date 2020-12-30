@@ -6,6 +6,8 @@ import config
 
 class MwmSizePredictor:
 
+    factors = ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt',)
+
     def __init__(self):
         with open(config.MWM_SIZE_PREDICTION_MODEL_PATH, 'rb') as f:
             self.model = pickle.load(f)
@@ -20,9 +22,9 @@ class MwmSizePredictor:
 
     @classmethod
     def predict(cls, features_array):
-        """1D or 2D array of feature values for predictions. Features are
-        'urban_pop', 'area', 'city_cnt', 'hamlet_cnt' as defined for the
-        prediction model.
+        """1D or 2D array of feature values for predictions.
+        Each feature is a list of values for factors
+        defined by 'cls.factors' sequence.
         """
         X = np.array(features_array)
         one_prediction = (X.ndim == 1)

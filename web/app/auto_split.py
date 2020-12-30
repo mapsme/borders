@@ -12,9 +12,12 @@ from subregions import get_subregions_info
 class DisjointClusterUnion:
     """Disjoint set union implementation for administrative subregions."""
 
-    def __init__(self, region_id, subregions, mwm_size_thr=None):
+    def __init__(self, region_id, subregions, next_level, mwm_size_thr=None):
+        assert all(s_data['mwm_size_est'] is not None
+                    for s_data in subregions.values())
         self.region_id = region_id
         self.subregions = subregions
+        self.next_level = next_level
         self.mwm_size_thr = mwm_size_thr or MWM_SIZE_THRESHOLD
         self.representatives = {sub_id: sub_id for sub_id in subregions}
         # A cluster is one or more subregions with common borders
@@ -84,7 +87,8 @@ def get_best_cluster_to_join_with(small_cluster_id,
     for subregion_id in subregion_ids:
         for other_subregion_id, length in common_border_matrix[subregion_id].items():
             other_cluster_id = dcu.find_cluster(other_subregion_id)
-            if other_cluster_id != small_cluster_id:
+            if (other_cluster_id != small_cluster_id and
+                    not dcu.clusters[other_cluster_id]['finished']):
                 common_borders[other_cluster_id] += length
     if not common_borders:
         return None
@@ -144,8 +148,10 @@ def find_golden_splitting(conn, border_id, next_level, mwm_size_thr):
                                      next_level, need_cities=True)
     if not subregions:
         return
+    if any(s_data['mwm_size_est'] is None for s_data in subregions.values()):
+        return
 
-    dcu = DisjointClusterUnion(border_id, subregions, mwm_size_thr)
+    dcu = DisjointClusterUnion(border_id, subregions, next_level, mwm_size_thr)
     all_subregion_ids = dcu.get_all_subregion_ids()
     common_border_matrix = calculate_common_border_matrix(conn, all_subregion_ids)
 
@@ -188,6 +194,7 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
             DELETE FROM {autosplit_table}
             WHERE osm_border_id = {dcu.region_id}
               AND mwm_size_thr = {dcu.mwm_size_thr}
+              AND next_level = {dcu.next_level}
             """)
         for cluster_id, data in dcu.clusters.items():
             subregion_ids = data['subregion_ids']
@@ -196,12 +203,13 @@ def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
             )
             cluster_geometry_sql = get_union_sql(subregion_ids)
             cursor.execute(f"""
-                INSERT INTO {autosplit_table} (osm_border_id, subregion_ids,
-                                               geom, mwm_size_thr, mwm_size_est)
+                INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
+                                               next_level, mwm_size_thr, mwm_size_est)
                   VALUES (
                     {dcu.region_id},
                     '{subregion_ids_array_str}',
                     ({cluster_geometry_sql}),
+                    {dcu.next_level},
                     {dcu.mwm_size_thr},
                     {data['mwm_size_est']}
                   )

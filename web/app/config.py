@@ -33,3 +33,9 @@ MWM_SIZE_THRESHOLD = 70*1024
 # Estimated mwm size is predicted by the 'model.pkl' with 'scaler.pkl' for X
 MWM_SIZE_PREDICTION_MODEL_PATH = '/app/data/model.pkl'
 MWM_SIZE_PREDICTION_MODEL_SCALER_PATH = '/app/data/scaler.pkl'
+MWM_SIZE_PREDICTION_MODEL_LIMITATIONS = {
+    'area': 5500 * 1.5,
+    'urban_pop': 3500000 * 1.5,
+    'city_cnt': 32 * 1.5,
+    'hamlet_cnt': 2120 * 1.5
+}
