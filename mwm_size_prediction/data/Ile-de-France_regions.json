@@ -1,0 +1,110 @@
+{
+  "-7449": {
+    "id": -7449,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Hauts-de-Seine",
+    "full_area": 175.650187734548,
+    "land_area": 175.650187734548,
+    "city_cnt": 34,
+    "city_pop": 1229903,
+    "hamlet_cnt": 5,
+    "hamlet_pop": 10262
+  },
+  "-7433": {
+    "id": -7433,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Val-d'Oise",
+    "full_area": 1253.10488501851,
+    "land_area": 1253.10488501851,
+    "city_cnt": 35,
+    "city_pop": 892958,
+    "hamlet_cnt": 308,
+    "hamlet_pop": 277650
+  },
+  "-7458": {
+    "id": -7458,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Val-de-Marne",
+    "full_area": 244.895935568537,
+    "land_area": 244.895935568537,
+    "city_cnt": 39,
+    "city_pop": 0,
+    "hamlet_cnt": 10,
+    "hamlet_pop": 0
+  },
+  "-7401": {
+    "id": -7401,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Essonne",
+    "full_area": 1819.68421396544,
+    "land_area": 1819.68421396544,
+    "city_cnt": 36,
+    "city_pop": 95025,
+    "hamlet_cnt": 323,
+    "hamlet_pop": 5342
+  },
+  "-7457": {
+    "id": -7457,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Yvelines",
+    "full_area": 2306.98265221632,
+    "land_area": 2306.98265221632,
+    "city_cnt": 40,
+    "city_pop": 88720,
+    "hamlet_cnt": 400,
+    "hamlet_pop": 73198
+  },
+  "-7383": {
+    "id": -7383,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Seine-et-Marne",
+    "full_area": 5927.36622656111,
+    "land_area": 5927.36622656111,
+    "city_cnt": 32,
+    "city_pop": 14886,
+    "hamlet_cnt": 1170,
+    "hamlet_pop": 13634
+  },
+  "-71525": {
+    "id": -71525,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Paris",
+    "full_area": 105.392477519986,
+    "land_area": 105.392477519986,
+    "city_cnt": 1,
+    "city_pop": 2187526,
+    "hamlet_cnt": 1,
+    "hamlet_pop": 0
+  },
+  "-8649": {
+    "id": -8649,
+    "parent_id": -1403916,
+    "al": 4,
+    "name": "Ile-de-France",
+    "full_area": 12070.0323782114,
+    "land_area": 12070.0323782114,
+    "city_cnt": 253,
+    "city_pop": 4509018,
+    "hamlet_cnt": 2221,
+    "hamlet_pop": 380086
+  },
+  "-7389": {
+    "id": -7389,
+    "parent_id": -8649,
+    "al": 6,
+    "name": "Seine-Saint-Denis",
+    "full_area": 236.955799626913,
+    "land_area": 236.955799626913,
+    "city_cnt": 36,
+    "city_pop": 0,
+    "hamlet_cnt": 4,
+    "hamlet_pop": 0
+  }
+}
