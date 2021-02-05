@@ -1,10 +1,10 @@
 # MWM size prediction model
 
-The web application uses a data-science-based model to predict size MWM files
-compiled from the borders. Here described are the efforts that were undertaken
+The web application uses a data-science-based model to predict the size of MWM file
+compiled on some area. Here described are the efforts that were undertaken
 to build such a prediction model. The serialized model resides at `web/app/data/`
 in the `model.pkl` and `scaler.pkl` files. Its first variant was trained only
-on county-level data and is valid at limited parameters range (see web/app/config.py
+on county-level data and is valid at limited parameters range (see `web/app/config.py`
 for the model limitations). Now we try to extend the model to predict also
 province-level regions.
 
@@ -22,31 +22,33 @@ were added.
 
 First, with the help of the web app I split the forementioned countries/regions down to the
 "county"-subregions in general sense of a "county" &ndash; it's an admin level
-which is too small for MWMs, but regions of one level higher are too big,
+which is too small for MWMs while regions of one level higher are too big,
 so that a usual MWM would be a cluster of "counties".
 
-Japan was a special case, so `extract_mwm_geo_data.py` script contains a
+Japan was a special case &ndash; leaf regions are mix of (6) and (7)-al subregions,
+so `extract_mwm_geo_data.py` script contains a
 function to split the country into subregions.
 
 The `extract_mwm_geo_data.py` script, endowed with a valid connection
 to the database with borders, gathers information about all borders of a
 given country/region and its descendants: id, parent_id, admin level, name,
 full area, land area (so the table with land borders of the planet is necessary),
-city/town count and population, hamlet/village count and population.
+city/town count and population, hamlet/village count and population, and from
+some timepoint &ndash; coastline length.
 
 One should keep in mind that some borders may be absent in OSM, so a region may
-not be fully covered by subregions. So, a region area (or places cout,
-or population) may be greater than the sum of areas of its subregions.
+not be fully covered with subregions. So, a region area (or places count,
+or population) may be greater than the sum of areas of its detected subregions.
 One way is to fix borders by hand. Another way, that I followed, is to select
 areas, cities and population from the database even for upper-level regions
-(except countries, for which the calculation would run too long and is not useful).
+(except countries, for which the calculation would run too long and is not very useful).
 
 #### Mwm size data gathering
 
 Having borders division of the training countries in the web app, I download all
 borders, changing the poly-file naming procedure so that the name to contain
 the region id. The id would be the link between files with geodata and mwm sizes data.
-So we have many border file with names like _03565917_Japan_Gunma Prefecture_Numata.poly_
+So we have many border files with names like _03565917_Japan_Gunma Prefecture_Numata.poly_
 that I place into the `omim/data/borders/` directory instead of original
 borders.
 
@@ -63,11 +65,49 @@ Then
 ```bash
 md5sum country.o5m > country.o5m.md5
 ```
+
+Its important to be aware that an mwm would include data to the other side of
+its border if there is no generated mwm to the other side of the border. So,
+if the country extract does not strictly follow its border, a gingle near-border mwms could be
+overestimated by 10-30%, the sum of all country mwms - up to 1.5%. Either use precise country.poly file
+or cheet with CountriesFilesIndexAffilation in 2 places of generator sources:
+
+```bash
+diff --git a/generator/final_processor_country.cpp b/generator/final_processor_country.cpp
+index b4aaa8dbbd..141ae88665 100644
+--- a/generator/final_processor_country.cpp
++++ b/generator/final_processor_country.cpp
+@@ -45,7 +45,7 @@ CountryFinalProcessor::CountryFinalProcessor(std::string const & borderPath,
+   , m_temporaryMwmPath(temporaryMwmPath)
+   , m_intermediateDir(intermediateDir)
+   , m_affiliations(
+-        std::make_unique<CountriesFilesIndexAffiliation>(m_borderPath, haveBordersForWholeWorld))
++        std::make_unique<CountriesFilesAffiliation>(m_borderPath, haveBordersForWholeWorld))
+   , m_threadsCount(threadsCount)
+ {
+ }
+diff --git a/generator/processor_country.cpp b/generator/processor_country.cpp
+index a122cbc926..e079cbb643 100644
+--- a/generator/processor_country.cpp
++++ b/generator/processor_country.cpp
+@@ -20,7 +20,7 @@ ProcessorCountry::ProcessorCountry(std::shared_ptr<FeatureProcessorQueue> const
+   m_processingChain = std::make_shared<RepresentationLayer>(m_complexFeaturesMixer);
+   m_processingChain->Add(std::make_shared<PrepareFeatureLayer>());
+   m_processingChain->Add(std::make_shared<CountryLayer>());
+-  auto affiliation = std::make_shared<feature::CountriesFilesIndexAffiliation>(
++  auto affiliation = std::make_shared<feature::CountriesFilesAffiliation>(
+       bordersPath, haveBordersForWholeWorld);
+   m_affiliationsLayer =
+       std::make_shared<AffiliationsFeatureLayer<>>(kAffiliationsBufferSize, affiliation, m_queue); 
+```
+Also, do not use ~ in -B option of osmconvert: "-B=~/borders/Austria.poly" would not expand tilde
+into $HOME in the middle of the word which leads into strange "no polygon file or too large" error.
+
 In `maps_generation.ini` I changed the path to the planet and md5sum file and run
 the MWMs generation with
 ```bash
 nohup python -m maps_generator --order="" --skip="Routing,RoutingTransit" \
-    --without_countries="World*" --countries="*_Switzerland_*" &
+    --countries="*_Switzerland_*" &
 ```
 
 For the asterisk to work at the beginning of the mask in the `--countries` option,
@@ -107,7 +147,8 @@ I got their sizes (in Kb) with this command:
 du maps_build/maps_build/2021_01_20__18_06_38/210120/*.mwm | sort -k2 > Norway.sizes
 ```
 
-In fact, I renamed directory to some 2021_01_20__18_06_38-Norway and used command
+In fact, I renamed directories to somewhat 2021_01_20__18_06_38-Norway
+and used commands like
 ```bash
 du maps_build/*-Norway/[0-9]*/*.mwm | sort -k2 > Norway.sizes
 ```
@@ -116,72 +157,98 @@ du maps_build/*-Norway/[0-9]*/*.mwm | sort -k2 > Norway.sizes
 
 Now I had a set of `<Country>_regions.json` and `<Country>.sizes` files
 with geo- and sizes-data respectively on several large regions with subregions.
-I used the `combine_data.py` script  to generate one big `7countries.csv`.
+I used the `combine_data.py` script  to generate one big `countries.csv`.
 
-Yet another `4countries.csv` file with Germany, Austria, Belgium and Netherlands
-subregions was already prepared before, it has excluded=1 flag for those
-Netherland subregions which contain much water (inner waters, not ocean). Also,
-there were not data for upper-lever regions, and the values of area, cities,
-population and mwm_size were obtained as the sum of subregions defined by
-parent_id column.
+Some regions of Netherlands which contain much water (inner waters, not ocean)
+have excluded=1 flag. The list of excluded 8-level regions is hardcoded, and the `size`
+column for parents that contain them is calculate as the sum of not excluded children.
 
-Set 'is_leaf' property in `4countries.csv`
-```python
-import pandas as pd
-data1 = pd.read_csv('data/4countries.csv', sep=';')  # Austria, Belgium, Netherlands, Germany
-data1['is_leaf'] = data1.apply(lambda row:
-    1 if len(data1[data1['parent_id'] == row['id']]) == 0 else 0
-    , axis=1)
-data1.to_csv('data/4countries.csv', index=False, sep=';')
-```
 
-Since data for country-level regions was not collected (due to long sql queries and
-mwm generation time), we enrich the `7countries.csv` dataset with country-level
-by summing up data of subregions:
-```python
-import pandas as pd
-data7 = pd.read_csv('data/7countries.csv', sep=';')
-
-# Drop data for countries if it present
-data7 = data7[data7['al'] != 2]
-
-countries = {'id':   [-59065, -2978650, -51701, -382313, -62149],
-             'name': ['Belarus', 'Norway', 'Switzerland', 'Japan', 'United Kingdom'],
-             'excluded': [0]*5,
-             'al': [2]*5,
-        }
-sum_fields = ('full_area', 'land_area', 'city_cnt', 'hamlet_cnt', 'city_pop', 'hamlet_pop', 'mwm_size_sum')
-
-for field in sum_fields:
-    field_values = [data7[data7['parent_id'] == c_id][field].sum() for c_id in countries['id']]
-    countries[field] = field_values
-
-countries_df = pd.DataFrame(countries, columns = list(countries.keys()))
-data7 = pd.concat([data7, countries_df])
-data7.to_csv('data/7countries-1.csv', index=False, sep=';')
-
-# Check, and if all right, do
-# import os; os.rename('data/7countries-1.csv', 'data/7countries.csv')
-```
-
-The union of `4countries.csv` and `7countries.csv` data is the
-dataset for data science experiments on mwm size prediction. Keep in mind
-that _mwm_size_ field may be NULL (for countries), or _mwm_size_sum_ may be NULL
-(in 4countries.csv). Make corrections when getting combined dataset:
+The `countries.csv` data is the
+dataset for data science experiments on mwm size prediction with _size_ column as
+target value:
 
 ```python
 import pandas as pd
-import numpy as np
 
-def fit_mwm_size(df):
-    df['mwm_size'] = np.where(df['mwm_size'].isnull(), df['mwm_size_sum'], df['mwm_size'])
-
-data1 = pd.read_csv('data/4countries.csv', sep=';')  # Austria, Belgium, Netherlands, Germany
-data2 = pd.read_csv('data/7countries.csv', sep=';')  # Norway, UK, US(4 states), Switzerland, Japan, Belarus, Ile-de-France
-
-data = pd.concat([data1, data2])
-
+data = pd.read_csv('data/countries.csv', sep=';')
 data = data[data.excluded.eq(0) & data.id.notnull()]
-
-fit_mwm_size(data)
 ```
+
+#### New dataset parameters
+
+Leaves, roughly speaking, area counties. Not leaves are states/prefectures/provinces.
+Country-sized regions were not included into the dataset.
+
+```python
+# Mean size of a leaf region (county/city)
+data[data['is_leaf'] == 1]['mwm_size'].mean()
+2985.1346153846152
+
+# Mean size of non-leaf regions
+data[data['is_leaf'] == 0]['mwm_size'].mean()
+77270.27027027027
+
+# Overall mean
+data['mwm_size'].mean()
+6349.332925336597
+
+```
+
+
+#### Results of training of the model
+
+On the extended dataset base on 11 countries the best result for the model
+tuning is neg_mean_square_error = -2940346333.0175967 at best_params: 
+{'C': 100000, 'epsilon': 5, 'gamma': 'auto', 'kernel': 'rbf'} (use `my_grid_search()`
+function in `main()` of the `data_science.py` script)
+which is worse than on initial 4 countries.
+Those 4 countries have little coastline except the Netherlands, and Netherlands regions
+were usually underestimated. So the way of improvement is to take coastline factor
+length into account. 
+
+
+### Coastline inclusion
+
+MWMs were generated with and without coastline for some regions with highly rugged
+coastline. omim branch was master at commit near 6ef8146fb19bb3cf5bfaaf3c994d5a010031730c (12 Jan 2021).
+The bash command used for the generation were like:
+
+```bash
+nohup python -m maps_generator --order="" --skip="Routing,RoutingTransit,Coastline" \
+ --countries="*_Scotland_Highland*,*_Scotland_Western Isles"
+```
+The difference was `Coastline` in `--skip` option and, naturally, `--countries`: \
+"\*_Scotland_Highland\*,\*_Scotland_Western Isles" \
+"\*_Nordland_Steigen,\*_Nordland_Meloy,\*_Nordland" \
+"\*_Amakusa,\*_Goto"
+
+
+The MWM sizes are in bytes:
+
+|                                       |with coast| no coast |coast %|
+| ------------------------------------- | --------:| --------:| -----:|
+|United Kingdom_Scotland_Highland	    | 25809723 | 24557284 |  4,85 |
+|United Kingdom_Scotland_Western Isles	|    57879 | 20759    | 64,13 |
+|Norway_Nordland_Steigen                |  7179127 | 6109432  | 14,90 |
+|Norway_Nordland_Meloy                  |  4564915 | 3864559  | 15,34 |
+|Norway_Nordland                        | 108832710| 100420238|  7,73 |
+|Japan_Kumamoto Prefecture_Amakusa      |  4221092 | 3756787  | 11,00 |
+|Japan_Nagasaki Prefecture_Goto         |  1002103 | 690700   | 31,08 |
+
+We make conclusion that the length of coastline is worth to be taken into account.
+
+
+#### Load coastlines into the database
+
+```bash
+wget https://osmdata.openstreetmap.de/download/coastlines-split-4326.zip
+unzip coastlines-split-4326.zip
+cd coastlines-split-4326/
+shp2pgsql -s 4326 lines.shp coastlines | psql -d az_gis3
+CREATE INDEX coastlines_geom_idx ON coastlines USING GIST (geom);
+```
+
+Long coastlines are already split into smaller pieces.
+
+`extract_mwm_data.py` script now also calculates coastline length for the regions.

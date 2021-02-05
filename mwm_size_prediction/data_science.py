@@ -13,21 +13,22 @@ from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
 
 
-def fit_mwm_size(df):
-    df['mwm_size'] = np.where(df['mwm_size'].isnull(), df['mwm_size_sum'], df['mwm_size'])
+#def fit_mwm_size(df):
+#    df['mwm_size'] = np.where(df['mwm_size'].isnull(), df['mwm_size_sum'], df['mwm_size'])
 
 
-data1 = pd.read_csv('data/4countries.csv', sep=';')  # Austria, Belgium, Netherlands, Germany
-data2 = pd.read_csv('data/7countries.csv', sep=';')  # Norway, UK, US(4 states), Switzerland, Japan, Belarus, Ile-de-France
+#data1 = pd.read_csv('data/4countries.csv', sep=';')  # Austria, Belgium, Netherlands, Germany
+#data2 = pd.read_csv('data/7countries.csv', sep=';')  # Norway, UK, US(4 states), Switzerland, Japan, Belarus, Ile-de-France
+data = pd.read_csv('data/countries.csv', sep=';')
 
-data = pd.concat([data1, data2])
-data = data[data.excluded.eq(0) & data.id.notnull() & data.is_leaf.eq(1)]
-fit_mwm_size(data)
+#data = pd.concat([data1, data2])
+data = data[data.excluded.eq(0) & data.id.notnull()]
+#fit_mwm_size(data)
 
 
 popul_column = 'city_pop'  # options are 'population and 'city_pop' (for population of cities and towns only)
-feature_names = [popul_column, 'land_area', 'city_cnt', 'hamlet_cnt']
-target_name = 'mwm_size'
+feature_names = [popul_column, 'land_area', 'city_cnt', 'hamlet_cnt', 'coastline_length']
+target_name = 'size'
 
 for feature in set(feature_names) - set(['land_area']):  # if area is None it's an error!
     data[feature] = data[feature].fillna(0)
@@ -79,11 +80,11 @@ def my_grid_search(sample):
         sc_X = StandardScaler()
         X = sc_X.fit_transform(X)
 
-        C_array = [10 ** n for n in range(6, 7)]
+        C_array = [10 ** n for n in range(5, 6)]
         #gamma_array =  [0.0001 + i * 0.00001 for i in range(-4, 5)] + ['auto', 'scale']
         #epsilon_array = [0.02 + i*0.002 for i in range(-4, 5)]
         gamma_array = [0, 100, 10000] + ['auto', 'scale']
-        epsilon_array = [0.5, 1, 2]
+        epsilon_array = [0, 1, 10]
         #coef0_array = [0, 0.01, 0.1, 1, 10]
         param_grid = [
            # {'kernel': ['linear'], 'C': C_array, 'epsilon': epsilon_array},
@@ -163,7 +164,35 @@ def test_predictions(data):
     predictions = [round(x, 1) for x in predictions]
     print(predictions)
 
+"""
+def train_model_at_all_and_test_on_leaves(sample):
+X = sample[feature_names]
+y = sample[target_name]
 
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+regressor = SVR(kernel='rbf', C=10 ** 5, epsilon=5, gamma='auto')
+regressor.fit(X, y)
+
+predictions = regressor.predict(X)
+diff = y - predictions
+mse = np.sqrt((diff*diff).sum()/len(diff))
+#47724.23021774437
+me = abs(diff).sum()/len(diff)
+#3958.586729638536
+
+leaves = sample[sample['is_leaf'] == 1]
+X_leaves = leaves[feature_names]
+y_leaves = leaves[target_name]
+
+l_predictions = regressor.predict(scaler.transform(X_leaves))
+l_diff = y_leaves - l_predictions
+l_mse = np.sqrt((l_diff*l_diff).sum()/len(l_diff))
+#3589.8199502064326
+l_me = abs(l_diff).sum()/len(l_diff)
+#1475.6617896408952
+"""
 
 
 if __name__ == '__main__':

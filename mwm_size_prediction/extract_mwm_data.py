@@ -4,7 +4,19 @@ import json
 from time import time
 
 
-def get_regions_info(upper_region):
+BORDERS_TABLE = 'borders'
+OSM_BORDERS_TABLE = 'osm_borders'
+OSM_PLACES_TABLE = 'osm_places'
+COASTLINE_TABLE = 'coastlines'
+LAND_POLYGONS_TABLE = 'coasts2'
+
+
+def get_regions_in_hierarchy(upper_region):
+    """We excluded country-level regions since they are too computationally
+    costly, and there is no need in MWMs of Germany/Japan size.
+    We would be able to calculate their parameters later by summing up
+    childrens.
+    """
     upper_region_identifier_column = 'name'
     try:
         upper_region = int(upper_region)
@@ -14,59 +26,88 @@ def get_regions_info(upper_region):
 
     query = f"""
       WITH RECURSIVE regions AS (
-         SELECT id FROM borders WHERE {upper_region_identifier_column} = %s
+         SELECT id FROM {BORDERS_TABLE} WHERE {upper_region_identifier_column} = %s
          UNION ALL
          SELECT child.id
-         FROM borders child JOIN regions ON child.parent_id = regions.id
+         FROM {BORDERS_TABLE} child JOIN regions ON child.parent_id = regions.id
       )
-      SELECT id, parent_id,
-          (SELECT admin_level FROM osm_borders WHERE osm_id = id) AL,
-          name,
-          ST_Area(geography(geom))/1e6 area,
-          ST_Area(geography(ST_Intersection(
-                               b.geom,
-                               (SELECT ST_Union(c.geom)
-                                FROM coasts c
-                                WHERE c.geom && b.geom
-                               )
-                 ))) / 1e6 land_area
-      FROM borders b
-      WHERE id IN (SELECT id FROM regions) AND (SELECT admin_level FROM osm_borders WHERE osm_id = id) > 2
+      SELECT id, parent_id, name,
+          (SELECT admin_level FROM {OSM_BORDERS_TABLE} WHERE osm_id = id) AL
+      FROM {BORDERS_TABLE}
+      WHERE id IN (SELECT id FROM regions)
+          AND (SELECT admin_level FROM {OSM_BORDERS_TABLE} WHERE osm_id = id) > 2
       """
 
-    t1 = time()
     regions = {}  # id => data
     with conn.cursor() as cursor:
         cursor.execute(query, (upper_region,))
-        for region_id, parent_id, al, name, area, land_area in cursor:
+        for region_id, parent_id, name, al in cursor:
             regions[region_id] = {
                 'id': region_id,
                 'parent_id': parent_id,
-                'al': al,
                 'name': name,
-                'full_area': area,
-                'land_area': land_area,
+                'al': al,
+                'full_area': None,
+                'land_area': None,
+                'coastline_length': None,
                 'city_cnt': 0,
                 'city_pop': 0,
                 'hamlet_cnt': 0,
                 'hamlet_pop': 0,
             }
-    t2 = time()
-    print(f"General info time (including area calculation): {(t2-t1)/60:.2f} m")
-    count_population(regions)
-    t3 = time()
-    print(f"Population  time: General info time           : {(t3-t2)/60:.2f} m")
+        return regions
+
+
+def calculate_area(regions):
+    """regions parameter may be calculated by the get_regions_in_hierarchy()
+    function or may be loaded from CSV/JSON, enriched with area and unloaded back.
+    """
+    if not regions:
+        return
+    ids_str = ','.join(str(x) for x in regions.keys())
+    query = f"""
+      SELECT id,
+          ST_Area(geography(geom))/1e6 full_area,
+          ST_Area(
+              geography(
+                  ST_Intersection(
+                      b.geom,
+                      (
+                        SELECT ST_Union(c.geom)
+                        FROM {LAND_POLYGONS_TABLE} c
+                        WHERE c.geom && b.geom
+                      )
+                  )
+              )
+          ) / 1e6 land_area
+      FROM {BORDERS_TABLE} b
+      WHERE id IN ({ids_str})
+      """
+
+    with conn.cursor() as cursor:
+        cursor.execute(query)
+        for region_id, full_area, land_area in cursor:
+            data = regions[region_id]
+            data['full_area'] = full_area
+            data['land_area'] = land_area
+
     return regions
 
 
-def count_population(regions):
+def calculate_population(regions):
+    """regions parameter may be calculated by the get_regions_in_hierarchy()
+    function or may be loaded from CSV/JSON, enriched with population
+    and unloaded back.
+    """
+    if not regions:
+        return
     ids_str = ','.join(str(x) for x in regions.keys())
     query = f"""
-        SELECT b_id id, b_name region_name, place_type, count(*) cnt, SUM(population) pop
+        SELECT b_id id, place_type, count(*) cnt, SUM(population) pop
         FROM (
           SELECT c.population, b.id b_id, b.name b_name,
           CASE WHEN c.place IN ('city', 'town') THEN 'city' ELSE 'hamlet' END AS place_type
-          FROM borders b, osm_places c
+          FROM {BORDERS_TABLE} b, {OSM_PLACES_TABLE} c
           WHERE b.id IN ({ids_str})
               AND ST_CONTAINS(b.geom, c.center)
         ) q
@@ -75,11 +116,55 @@ def count_population(regions):
     """
     with conn.cursor() as cursor:
         cursor.execute(query)
-        for b_id, b_name, place_type, cnt, pop in cursor:
+        for b_id, place_type, cnt, pop in cursor:
             cnt_key = f"{place_type}_cnt"
-            pop_key = f"{place_type}_pop" or 0
-            regions[b_id][cnt_key] = cnt
-            regions[b_id][pop_key] = pop or 0
+            pop_key = f"{place_type}_pop"
+            regions[b_id][cnt_key] = cnt       # count(*) cannot be NULL
+            regions[b_id][pop_key] = pop or 0  # sum(col) can be NULL
+
+    return regions
+
+
+def calculate_coastline_length(regions):
+    """regions parameter may be calculated by the get_regions_in_hierarchy()
+    function or may be loaded from CSV/JSON, enriched with coastline length
+    and unloaded back.
+    """
+    if not regions:
+        return
+
+    for b_data in regions.values():
+        b_data['coastline_length'] = 0.0
+
+    ids_str = ','.join(str(x) for x in regions.keys())
+    #print(f"ids_str = {ids_str}")
+    query = f"""
+        WITH brds AS (
+            SELECT id, name, ST_Buffer(geom, 0.001) geom
+            FROM {BORDERS_TABLE}
+            WHERE id IN ({ids_str})
+        )
+        SELECT brds.id,
+               brds.name,
+               SUM(
+                   ST_Length(
+                       geography(
+                           ST_Intersection(
+                               brds.geom,
+                               c.geom
+                           )
+                       )
+                   )
+               ) / 1e3
+        FROM {COASTLINE_TABLE} c, brds
+        WHERE c.geom && brds.geom
+        GROUP BY brds.id, brds.name
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(query)
+        for b_id, name, coastline_length in cursor:
+            #print(f"got length of {name} = {coastline_length} km")
+            regions[b_id]['coastline_length'] = coastline_length
 
     return regions
 
@@ -91,9 +176,25 @@ def main():
         sys.exit()
 
     upper_region = sys.argv[1]
-    regions = get_regions_info(upper_region)
-    upper_region_name = regions[upper_region]['name'] if isinstance(upper_region, int) else upper_region
 
+    t1 = time()
+    regions = get_regions_in_hierarchy(upper_region)
+    t2 = time()
+    print(f"get_regions_in_hierarchy() time: {(t2-t1)/60:.2f} m")
+
+    calculate_area(regions)
+    t3 = time()
+    print(f"calculate_area()           time: {(t3-t2)/60:.2f} m")
+
+    calculate_population(regions)
+    t4 = time()
+    print(f"calculate_population()     time: {(t4-t3)/60:.2f} m")
+
+    calculate_coastline_length(regions)
+    t5 = time()
+    print(f"calculate_coastline_length() ti: {(t5-t4)/60:.2f} m")
+
+    upper_region_name = regions[upper_region]['name'] if isinstance(upper_region, int) else upper_region
     with open(f"{upper_region_name}_regions.json", "w") as f:
         json.dump(regions, f, ensure_ascii=False, indent=2)
 
@@ -143,15 +244,12 @@ def make_japan():
     japan_id = -382313
 
     copy_from_osm(japan_id, None)
-    # Prefectures
     pref_region_ids = get_subregion_ids(japan_id, 4)
     for pref_id in pref_region_ids:
         copy_from_osm(pref_id, japan_id)
-        # Counties
         county_ids = get_subregion_ids(pref_id, 6)
         for c_id in county_ids:
             copy_from_osm(c_id, pref_id)
-        # Cities that are direct children on prefectures
         city_ids = get_subregion_ids(pref_id, 7, check_intersection=True)
         for c_id in city_ids:
             copy_from_osm(c_id, pref_id)
