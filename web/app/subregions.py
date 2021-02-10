@@ -6,6 +6,8 @@ from config import (
     MWM_SIZE_PREDICTION_MODEL_LIMITATIONS,
     OSM_TABLE as osm_table,
     OSM_PLACES_TABLE as osm_places_table,
+    LAND_POLYGONS_TABLE as land_polygons_table,
+    COASTLINE_TABLE as coastline_table,
 )
 from mwm_size_predictor import MwmSizePredictor
 
@@ -19,8 +21,9 @@ def get_subregions_info(conn, region_id, region_table,
     :param next_level: admin level of subregions to find
     :return: dict {subregion_id => subregion data} including area and population info
     """
-    subregions = _get_subregions_basic_info(conn, region_id, region_table,
-                                            next_level)
+    subregion_ids = _get_geometrical_subregion_ids(conn, region_id,
+                                                   region_table, next_level)
+    subregions = _get_regions_basic_info(conn, subregion_ids)
     _add_mwm_size_estimation(conn, subregions, need_cities)
     keys = ('name', 'mwm_size_est')
     if need_cities:
@@ -31,130 +34,191 @@ def get_subregions_info(conn, region_id, region_table,
     }
 
 
-def _get_subregions_basic_info(conn, region_id, region_table,
-                               next_level):
-    cursor = conn.cursor()
+def _get_geometrical_subregion_ids(conn, region_id, region_table, next_level):
     region_id_column, region_geom_column = (
         ('id', 'geom') if region_table == borders_table else
         ('osm_id', 'way')
     )
-    cursor.execute(f"""
-        SELECT subreg.osm_id, subreg.name,
-               ST_Area(geography(subreg.way))/1.0E+6 area
-        FROM {region_table} reg, {osm_table} subreg
-        WHERE reg.{region_id_column} = %s AND subreg.admin_level = %s AND
-              ST_Contains(reg.{region_geom_column}, subreg.way)
-        """, (region_id, next_level)
-    )
-    subregions = {}
-    for rec in cursor:
-        subregion_data = {
-            'osm_id': rec[0],
-            'name': rec[1],
-            'area': rec[2],
-        }
-        subregions[rec[0]] = subregion_data
-    return subregions
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT subreg.osm_id
+            FROM {region_table} reg, {osm_table} subreg
+            WHERE reg.{region_id_column} = %s AND subreg.admin_level = %s AND
+                  ST_Contains(reg.{region_geom_column}, subreg.way)
+            """, (region_id, next_level)
+        )
+        return list(rec[0] for rec in cursor)
 
 
-def _add_population_data(conn, subregions, need_cities):
-    """Adds population data only for subregions that are suitable
+def _get_regions_basic_info(conn, region_ids):
+    """Gets name, land_area for regions in OSM borders table"""
+    if not region_ids:
+        return {}
+
+    region_ids_str = ','.join(str(x) for x in region_ids)
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT reg.osm_id, reg.name,
+              ST_Area(
+                geography(
+                  ST_Intersection(
+                    reg.way,
+                    (
+                      SELECT ST_Union(c.geom)
+                      FROM {land_polygons_table} c
+                      WHERE c.geom && reg.way
+                    )
+                  )
+                )
+              ) / 1.0E+6 land_area
+            FROM {osm_table} reg
+            WHERE osm_id in ({region_ids_str})
+            """
+        )
+        regions = {}
+        for osm_id, name, land_area in cursor:
+            region_data = {
+                'osm_id': osm_id,
+                'name': name,
+                'land_area': land_area,
+            }
+            regions[osm_id] = region_data
+    return regions
+
+
+def _add_population_data(conn, regions, need_cities):
+    """Adds population data only for regions that are suitable
     for mwm size estimation.
     """
-    subregion_ids = [
-        s_id for s_id, s_data in subregions.items()
-        if s_data['area'] <= MWM_SIZE_PREDICTION_MODEL_LIMITATIONS['area']
+    region_ids = [
+        s_id for s_id, s_data in regions.items()
+        if s_data['land_area'] <= MWM_SIZE_PREDICTION_MODEL_LIMITATIONS['land_area']
     ]
-    if not subregion_ids:
+    if not region_ids:
         return
 
-    for subregion_id, data in subregions.items():
+    for region_id, data in regions.items():
         data.update({
-            'urban_pop': 0,
+            'city_pop': 0,
             'city_cnt': 0,
             'hamlet_cnt': 0
         })
         if need_cities:
             data['cities'] = []
 
-    subregion_ids_str = ','.join(str(x) for x in subregion_ids)
+    region_ids_str = ','.join(str(x) for x in region_ids)
     with conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT b.osm_id, p.name, coalesce(p.population, 0), p.place
             FROM {osm_table} b, {osm_places_table} p
-            WHERE b.osm_id IN ({subregion_ids_str})
+            WHERE b.osm_id IN ({region_ids_str})
                 AND ST_Contains(b.way, p.center)
             """
         )
-        for subregion_id, place_name, place_population, place_type in cursor:
-            subregion_data = subregions[subregion_id]
+        for region_id, place_name, place_population, place_type in cursor:
+            region_data = regions[region_id]
             if place_type in ('city', 'town'):
-                subregion_data['city_cnt'] += 1
-                subregion_data['urban_pop'] += place_population
+                region_data['city_cnt'] += 1
+                region_data['city_pop'] += place_population
                 if need_cities:
-                    subregion_data['cities'].append({
+                    region_data['cities'].append({
                         'name': place_name,
                         'population': place_population
                     })
             else:
-                subregion_data['hamlet_cnt'] += 1
+                region_data['hamlet_cnt'] += 1
 
 
-def _add_mwm_size_estimation(conn, subregions, need_cities):
-    for subregion_data in subregions.values():
-        subregion_data['mwm_size_est'] = None
-
-    _add_population_data(conn, subregions, need_cities)
-
-    subregions_to_predict = [
-        (
-            s_id,
-            [subregions[s_id][f] for f in MwmSizePredictor.factors]
-        )
-        for s_id in sorted(subregions.keys())
-            if all(subregions[s_id].get(f) is not None and
-                   subregions[s_id][f] <=
-                        MWM_SIZE_PREDICTION_MODEL_LIMITATIONS[f]
-                   for f in MwmSizePredictor.factors)
-    ]
-
-    if not subregions_to_predict:
+def _add_coastline_length(conn, regions):
+    if not regions:
         return
 
-    feature_array = [x[1] for x in subregions_to_predict]
+    for r_data in regions.values():
+        r_data['coastline_length'] = 0.0
+
+    region_ids_str = ','.join(str(x) for x in regions.keys())
+
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            WITH buffered_borders AS (
+              -- 0.001 degree ~ 100 m - ocean buffer stripe to overcome difference
+              -- in coastline and borders
+              SELECT id, ST_Buffer(geom, 0.001) geom
+              FROM {borders_table}
+              WHERE id IN ({region_ids_str})
+            )
+            SELECT bb.id,
+                   SUM(
+                     ST_Length(
+                       geography(
+                         ST_Intersection(
+                           bb.geom,
+                           c.geom
+                         )
+                       )
+                     )
+                   ) / 1e3
+            FROM {coastline_table} c, buffered_borders as bb
+            WHERE c.geom && bb.geom
+            GROUP BY bb.id
+            """)
+        for b_id, coastline_length in cursor:
+            regions[b_id]['coastline_length'] = coastline_length
+
+
+def _add_mwm_size_estimation(conn, regions, need_cities):
+    for region_data in regions.values():
+        region_data['mwm_size_est'] = None
+
+    _add_population_data(conn, regions, need_cities)
+    _add_coastline_length(conn, regions)
+
+    #from pprint import pprint as pp
+    #pp(regions)
+    regions_to_predict = [
+        (
+            s_id,
+            [regions[s_id][f] for f in MwmSizePredictor.factors]
+        )
+        for s_id in sorted(regions.keys())
+            if all(regions[s_id].get(f) is not None and
+                   regions[s_id][f] <=
+                        MWM_SIZE_PREDICTION_MODEL_LIMITATIONS[f]
+                   for f in MwmSizePredictor.factors
+                   if f in MWM_SIZE_PREDICTION_MODEL_LIMITATIONS.keys())
+    ]
+
+    if not regions_to_predict:
+        return
+
+    feature_array = [x[1] for x in regions_to_predict]
     predictions = MwmSizePredictor.predict(feature_array)
 
-    for subregion_id, mwm_size_prediction in zip(
-        (x[0] for x in subregions_to_predict),
+    for region_id, mwm_size_prediction in zip(
+        (x[0] for x in regions_to_predict),
         predictions
     ):
-        subregions[subregion_id]['mwm_size_est'] = mwm_size_prediction
+        regions[region_id]['mwm_size_est'] = mwm_size_prediction
 
 
 def update_border_mwm_size_estimation(conn, border_id):
+    regions = _get_regions_basic_info(conn, [border_id])
+
+    if math.isnan(regions[border_id]['land_area']):
+        e = Exception(f"Area is NaN for border '{name}' ({border_id})")
+        raise e
+
+    _add_mwm_size_estimation(conn, regions, need_cities=False)
+    mwm_size_est = regions[border_id].get('mwm_size_est')
+    # mwm_size_est may be None. Python's None is converted to NULL
+    # during %s substitution in execute().
     with conn.cursor() as cursor:
-        cursor.execute(f"""
-            SELECT name, ST_Area(geography(geom))/1.0E+6 area
-            FROM {borders_table}
-            WHERE id = %s""", (border_id,))
-        name, area = cursor.fetchone()
-        if math.isnan(area):
-            e = Exception(f"Area is NaN for border '{name}' ({border_id})")
-            raise e
-        border_data = {
-            'area': area,
-        }
-        regions = {border_id: border_data}
-        _add_mwm_size_estimation(conn, regions, need_cities=False)
-        mwm_size_est = border_data.get('mwm_size_est')
-        # mwm_size_est may be None. Python's None is converted to NULL
-        # duging %s substitution in execute().
         cursor.execute(f"""
             UPDATE {borders_table}
             SET mwm_size_est = %s
             WHERE id = %s
             """, (mwm_size_est, border_id,))
-        conn.commit()
+    conn.commit()
 
 
 def is_administrative_region(conn, region_id):
