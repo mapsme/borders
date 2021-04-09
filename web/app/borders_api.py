@@ -20,6 +20,7 @@ import psycopg2
 import config
 from borders_api_utils import *
 from countries_structure import (
+    auto_divide_country,
     CountryStructureException,
     create_countries_initial_structure,
 )
@@ -28,6 +29,7 @@ from osm_xml import (
     borders_to_xml,
     lines_to_xml,
 )
+from simple_splitting import simple_split
 from subregions import (
     get_child_region_ids,
     get_parent_region_id,
@@ -233,20 +235,59 @@ def prepare_sql_search_string(string):
 @app.route('/search')
 def search():
     query = request.args.get('q')
-    sql_search_string = prepare_sql_search_string(query)
+    # query may contain region id or a part of its name
+    try:
+        region_id = int(query)
+        search_value = region_id
+        is_id = True
+    except ValueError:
+        search_value = prepare_sql_search_string(query)
+        is_id = False
 
     with g.conn.cursor() as cursor:
         cursor.execute(f"""
             SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom)
             FROM {config.BORDERS_TABLE}
-            WHERE name ILIKE %s
+            WHERE {'id =' if is_id else 'name ILIKE'} %s
             ORDER BY (ST_Area(geography(geom)))
-            LIMIT 1""", (sql_search_string,)
+            LIMIT 1""", (search_value,)
         )
         if cursor.rowcount > 0:
             rec = cursor.fetchone()
             return jsonify(status='ok', bounds=rec)
     return jsonify(status='not found')
+
+
+@app.route('/simple_split')
+@check_write_access
+@validate_args_types(id=int)
+def simple_split_endpoint():
+    """Split into 2/4 parts with straight lines"""
+    region_id = int(request.args.get('id'))
+    with g.conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT name, mwm_size_est
+            FROM {config.BORDERS_TABLE}
+            WHERE id = %s""", (region_id,))
+        if cursor.rowcount == 0:
+            return jsonify(status=f"Region {region_id} not found")
+        name, mwm_size_est = cursor.fetchone()
+        if mwm_size_est is None:
+            mwm_size_est = update_border_mwm_size_estimation(g.conn, region_id)
+            if mwm_size_est is not None:
+                return jsonify(status='MWM size estimation was updated')
+            else:
+                return jsonify(status="Cannot esitmate region mwm size")
+        region = {
+            'id': region_id,
+            'name': name,
+            'mwm_size_est': mwm_size_est,
+        }
+
+    if simple_split(g.conn, region):
+        g.conn.commit()
+        return jsonify(status='ok')
+    return jsonify(status="Can't split region into parts")
 
 
 @app.route('/split')
@@ -863,7 +904,7 @@ def export_poly():
     borders_table = request.args.get('table')
     borders_table = config.OTHER_TABLES.get(borders_table, config.BORDERS_TABLE)
 
-    fetch_borders_args = {'table': borders_table,  'only_leaves': True}
+    fetch_borders_args = {'table': borders_table,  'only_leaves': False}
 
     if 'xmin' in request.args:
         # If one coordinate is given then others are also expected.
@@ -993,6 +1034,15 @@ def border():
         return jsonify(status=f'No border with id={region_id} found')
     return jsonify(status='ok', geojson=borders[0])
 
+
+@app.route('/auto_divide_country')
+@validate_args_types(id=int)
+def auto_divide_country_endpoint():
+    country_id = int(request.args.get('id'))
+    errors, warnings = auto_divide_country(g.conn, country_id)
+    if errors:
+        return jsonify(status='<br/>'.join(errors[:3]))
+    return jsonify(status='ok', warnings=warnings[:10])
 
 @app.route('/start_over')
 def start_over():

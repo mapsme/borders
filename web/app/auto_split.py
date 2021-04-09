@@ -6,18 +6,19 @@ from config import (
         OSM_TABLE as osm_table,
         MWM_SIZE_THRESHOLD,
 )
-from subregions import get_subregions_info
+from subregions import (
+    get_regions_info,
+    get_subregions_info,
+)
 
 
 class DisjointClusterUnion:
     """Disjoint set union implementation for administrative subregions."""
 
-    def __init__(self, region_id, subregions, next_level, mwm_size_thr=None):
+    def __init__(self, subregions, mwm_size_thr=None):
         assert all(s_data['mwm_size_est'] is not None
                     for s_data in subregions.values())
-        self.region_id = region_id
         self.subregions = subregions
-        self.next_level = next_level
         self.mwm_size_thr = mwm_size_thr or MWM_SIZE_THRESHOLD
         self.representatives = {sub_id: sub_id for sub_id in subregions}
         # A cluster is one or more subregions with common borders
@@ -32,6 +33,22 @@ class DisjointClusterUnion:
                 'mwm_size_est': data['mwm_size_est'],
                 'finished': False,  # True if the cluster cannot be merged with another
             }
+
+    def try_collapse_into_one(self):
+        sum_mwm_size_est = sum(s_data['mwm_size_est']
+                            for s_data in self.subregions.values())
+        if sum_mwm_size_est <= self.mwm_size_thr:
+            a_subregion_id = next(iter(self.subregions))
+            self.clusters = {}
+            self.clusters[a_subregion_id] = {
+                'representative': a_subregion_id,
+                'subregion_ids': list(self.subregions.keys()),
+                'mwm_size_est': sum_mwm_size_est,
+                'finished': True
+            }
+            return True
+        else:
+            return False
 
     def get_smallest_cluster(self):
         """Find minimal cluster."""
@@ -143,15 +160,14 @@ def calculate_common_border_matrix(conn, subregion_ids):
     return common_border_matrix
 
 
-def find_golden_splitting(conn, border_id, next_level, mwm_size_thr):
-    subregions = get_subregions_info(conn, border_id, osm_table,
-                                     next_level, need_cities=True)
-    if not subregions:
-        return
-    if any(s_data['mwm_size_est'] is None for s_data in subregions.values()):
+def combine_into_clusters(conn, regions, mwm_size_thr):
+    """Merge regions into clusters up to mwm_size_thr"""
+
+    if any(s_data['mwm_size_est'] is None for s_data in regions.values()):
         return
 
-    dcu = DisjointClusterUnion(border_id, subregions, next_level, mwm_size_thr)
+    dcu = DisjointClusterUnion(regions, mwm_size_thr)
+
     all_subregion_ids = dcu.get_all_subregion_ids()
     common_border_matrix = calculate_common_border_matrix(conn, all_subregion_ids)
 
@@ -172,57 +188,40 @@ def find_golden_splitting(conn, border_id, next_level, mwm_size_thr):
     return dcu
 
 
-def get_union_sql(subregion_ids):
-    assert(len(subregion_ids) > 0)
-    if len(subregion_ids) == 1:
-        return f"""
-            SELECT way FROM {osm_table} WHERE osm_id={subregion_ids[0]}
-        """
-    else:
-        return f"""
-            SELECT ST_Union(
-              ({get_union_sql(subregion_ids[0:1])}),
-              ({get_union_sql(subregion_ids[1:])})
-            )
-            """
+def split_region_at_admin_level(conn, region_id, next_level, mwm_size_thr):
+    subregions = get_subregions_info(conn, region_id, osm_table, next_level)
+    if not subregions:
+        return
+    dcu = combine_into_clusters(conn, subregions, mwm_size_thr)
+    save_splitting_to_db(conn, region_id, next_level, dcu)
 
 
-def save_splitting_to_db(conn, dcu: DisjointClusterUnion):
+def save_splitting_to_db(conn, region_id, next_level, dcu: DisjointClusterUnion):
     with conn.cursor() as cursor:
         # Remove previous splitting of the region
         cursor.execute(f"""
             DELETE FROM {autosplit_table}
-            WHERE osm_border_id = {dcu.region_id}
+            WHERE osm_border_id = {region_id}
               AND mwm_size_thr = {dcu.mwm_size_thr}
-              AND next_level = {dcu.next_level}
+              AND next_level = {next_level}
             """)
-        for cluster_id, data in dcu.clusters.items():
-            subregion_ids = data['subregion_ids']
-            subregion_ids_array_str = (
-                    '{' + ','.join(str(x) for x in subregion_ids) + '}'
-            )
-            cluster_geometry_sql = get_union_sql(subregion_ids)
+        for cluster_id, cluster_data in dcu.clusters.items():
+            subregion_ids = cluster_data['subregion_ids']
+            subregion_ids_str = ','.join(str(x) for x in subregion_ids)
+            subregion_ids_array_str = '{' + subregion_ids_str + '}'
             cursor.execute(f"""
                 INSERT INTO {autosplit_table} (osm_border_id, subregion_ids, geom,
                                                next_level, mwm_size_thr, mwm_size_est)
                   VALUES (
-                    {dcu.region_id},
+                    {region_id},
                     '{subregion_ids_array_str}',
-                    ({cluster_geometry_sql}),
-                    {dcu.next_level},
+                    (
+                      SELECT ST_Union(way) FROM {osm_table}
+                      WHERE osm_id IN ({subregion_ids_str})
+                    ),
+                    {next_level},
                     {dcu.mwm_size_thr},
-                    {data['mwm_size_est']}
+                    {cluster_data['mwm_size_est']}
                   )
                 """)
     conn.commit()
-
-
-def split_region(conn, region_id, next_level, mwm_size_thr):
-    dcu = find_golden_splitting(conn, region_id, next_level, mwm_size_thr)
-    if dcu is None:
-        return
-    save_splitting_to_db(conn, dcu)
-
-    ## May need to debug
-    #from auto_split_debug import save_splitting_to_file
-    #save_splitting_to_file(conn, dcu)
