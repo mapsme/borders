@@ -257,6 +257,7 @@ def split():
     line = request.args.get('line')
     save_region = (request.args.get('save_region') == 'true')
     borders_table = config.BORDERS_TABLE
+    warnings = []
     with g.conn.cursor() as cursor:
         # check that we're splitting a single polygon
         cursor.execute(f"""
@@ -305,7 +306,6 @@ def split():
                 new_ids.append(free_id)
                 counter += 1
                 free_id -= 1
-            warnings = []
             for border_id in new_ids:
                 try:
                     update_border_mwm_size_estimation(g.conn, border_id)
