@@ -409,16 +409,18 @@ def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed', mwm
             errors.append(f"Region with id={region_id} already exists under name '{name}'")
             return errors, warnings
 
-        name_expr = f"'{name}'" if name else "name"
         parent_id_sql = None if parent_id == 'not_passed' else parent_id
-        cursor.execute(f"""
+        query = f"""
             INSERT INTO {borders_table}
                     (id, geom, name, parent_id, modified, count_k, mwm_size_est)
-              SELECT osm_id, way, {name_expr}, %s, now(), -1, %s
+              SELECT osm_id, way, {'%s' if name is not None else 'name'}, %s, now(), -1, %s
               FROM {osm_table}
               WHERE osm_id = %s
-            """, (parent_id_sql, mwm_size_est, region_id,)
-        )
+        """
+        args = (parent_id_sql, mwm_size_est, region_id)
+        if name is not None:
+           args = (name,) + args
+        cursor.execute(query, args)
         if parent_id == 'not_passed':
             assign_region_to_lowest_parent(conn, region_id)
 
