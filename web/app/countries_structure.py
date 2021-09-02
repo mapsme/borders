@@ -24,6 +24,7 @@ from subregions import (
     get_geometrical_subregions,
     update_border_mwm_size_estimation,
 )
+from utils import is_land_table_available
 
 
 class CountryStructureException(Exception):
@@ -64,7 +65,7 @@ def _amend_regions_with_mwm_size(conn, regions):
 def auto_divide_country(conn, country_id):
     country_name = get_osm_border_name_by_osm_id(conn, country_id)
     metalevels = country_levels.get(country_name, None)
-    if metalevels is None:
+    if metalevels is None or not is_land_table_available(conn):
         e, w = copy_region_from_osm(conn, country_id)
         conn.commit()
         return e, w

@@ -10,6 +10,10 @@ from config import (
     COASTLINE_TABLE as coastline_table,
 )
 from mwm_size_predictor import MwmSizePredictor
+from utils import (
+    is_coastline_table_available,
+    is_land_table_available,
+)
 
 
 def get_regions_info(conn, region_ids, regions_table, need_cities=False):
@@ -69,7 +73,7 @@ def get_regions_basic_info(conn, region_ids, regions_table, need_land_area=True)
     )
     region_ids_str = ','.join(str(x) for x in region_ids)
     land_area_expr = (
-        'NULL' if not need_land_area
+        'NULL' if not need_land_area or not is_land_table_available(conn)
         else f"""
               ST_Area(
                 geography(
@@ -111,9 +115,11 @@ def _add_population_data(conn, regions, regions_table, need_cities):
     """Adds population data only for regions that are suitable
     for mwm size estimation.
     """
+    print(regions)
     region_ids = [
         s_id for s_id, s_data in regions.items()
-        if s_data['land_area'] <= MWM_SIZE_PREDICTION_MODEL_LIMITATIONS['land_area']
+        if s_data.get('land_area') is not None and
+            s_data['land_area'] <= MWM_SIZE_PREDICTION_MODEL_LIMITATIONS['land_area']
     ]
     if not region_ids:
         return
@@ -156,7 +162,7 @@ def _add_population_data(conn, regions, regions_table, need_cities):
 
 
 def _add_coastline_length(conn, regions, regions_table):
-    if not regions:
+    if not regions or not is_coastline_table_available(conn):
         return
 
     for r_data in regions.values():

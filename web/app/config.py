@@ -13,8 +13,10 @@ OSM_PLACES_TABLE = 'osm_places'
 # transit table for autosplitting results
 AUTOSPLIT_TABLE = 'splitting'
 # table with land polygons (i.e. without ocean), split into smaller overlapping pieces
-LAND_POLYGONS_TABLE = 'coasts2'
+# TODO: prepare this table during docker container setup
+LAND_POLYGONS_TABLE = 'land'
 # coastline split into smaller chunks
+# TODO: prepare this table during docker container setup
 COASTLINE_TABLE = 'coastlines'
 # tables with borders for reference
 OTHER_TABLES = {
