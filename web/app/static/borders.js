@@ -598,6 +598,17 @@ function bDisable() {
     });
 }
 
+function bSimpleSplit() {
+    if (!selectedId || !(selectedId in borders))
+        return;
+    $.ajax(getServer('simple_split'), {
+        data: {
+            'id': selectedId
+        },
+        success: makeAnswerHandler(updateBorders)
+    });
+}
+
 function bDelete() {
     if (!selectedId || !(selectedId in borders))
         return;
@@ -977,23 +988,44 @@ function updatePointList(data) {
         a.onclick = (function(id, name) {
             return function() {
                 pPointSelect(id, name);
-                return false
-            }
+                return false;
+            };
         })(b['id'], b['name']);
-        list.append(a, $('<br>'));
-        $(a).text(b['admin_level'] + ': ' + b['name'] + ' (' + Math.round(b[
-            'area']) + ' км²)');
+        list.append(a);
+        $(a).text(b['admin_level'] + ': ' + b['name'] + ' (' +
+                      Math.round(b['area']) + ' км²)');
+        if (b['admin_level'] == 2) {
+            var auto_divide_link = document.createElement('a');
+            auto_divide_link.href = '#';
+            auto_divide_link.onclick = (function(id) {
+                return function() {
+                    pAutoDivideCountry(id);
+                    return false;
+                };
+            })(b['id']);
+            $(auto_divide_link).text("!!autodivide!!");
+            list.append("<br>&nbsp;&nbsp;&nbsp;", auto_divide_link);
+        }
+        list.append("<br>");
     }
 }
 
-function pPointSelect(id, name1) {
+function pPointSelect(id, osm_name) {
     var name = $('#p_name').val();
-    name = name.replace('*', name1);
+    name = name.replace('*', osm_name);
     $.ajax(getServer('from_osm'), {
         data: {
             'name': name,
             'id': id
         },
+        success: makeAnswerHandler(updateBorders)
+    });
+    bPointCancel();
+}
+
+function pAutoDivideCountry(id) {
+    $.ajax(getServer('auto_divide_country'), {
+        data: {'id': id},
         success: makeAnswerHandler(updateBorders)
     });
     bPointCancel();

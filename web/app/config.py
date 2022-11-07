@@ -12,6 +12,12 @@ OSM_TABLE = 'osm_borders'
 OSM_PLACES_TABLE = 'osm_places'
 # transit table for autosplitting results
 AUTOSPLIT_TABLE = 'splitting'
+# table with land polygons (i.e. without ocean), split into smaller overlapping pieces
+# TODO: prepare this table during docker container setup
+LAND_POLYGONS_TABLE = 'land'
+# coastline split into smaller chunks
+# TODO: prepare this table during docker container setup
+COASTLINE_TABLE = 'coastlines'
 # tables with borders for reference
 OTHER_TABLES = {
     #'old': 'old_borders'
@@ -30,12 +36,13 @@ DAEMON_PID_PATH = '/tmp/borders-daemon.pid'
 DAEMON_LOG_PATH = '/var/log/borders-daemon.log'
 # mwm size threshold in Kb
 MWM_SIZE_THRESHOLD = 70*1024
-# Estimated mwm size is predicted by the 'model.pkl' with 'scaler.pkl' for X
-MWM_SIZE_PREDICTION_MODEL_PATH = '/app/data/model.pkl'
-MWM_SIZE_PREDICTION_MODEL_SCALER_PATH = '/app/data/scaler.pkl'
+# Estimated mwm size is predicted by the 'model*.pkl' with 'scaler*.pkl' for X
+MWM_SIZE_PREDICTION_MODEL_PATH = '/app/data/model_with_coastline.pkl'
+MWM_SIZE_PREDICTION_MODEL_SCALER_PATH = '/app/data/scaler_with_coastline.pkl'
 MWM_SIZE_PREDICTION_MODEL_LIMITATIONS = {
-    'area': 5500 * 1.5,
-    'urban_pop': 3500000 * 1.5,
-    'city_cnt': 32 * 1.5,
-    'hamlet_cnt': 2120 * 1.5
+    'land_area': 700_000,
+    'city_pop': 32_000_000,
+    'city_cnt': 1_200,
+    'hamlet_cnt': 40_000,
+    'coastline_length': 25_000,
 }

@@ -6,7 +6,8 @@ import config
 
 class MwmSizePredictor:
 
-    factors = ('urban_pop', 'area', 'city_cnt', 'hamlet_cnt',)
+    factors = ('city_pop', 'land_area', 'city_cnt', 'hamlet_cnt',
+               'coastline_length')
 
     def __init__(self):
         with open(config.MWM_SIZE_PREDICTION_MODEL_PATH, 'rb') as f:

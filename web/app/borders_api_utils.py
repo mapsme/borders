@@ -8,7 +8,7 @@ from config import (
     BORDERS_TABLE as borders_table,
     OSM_TABLE as osm_table,
 )
-from auto_split import split_region
+from auto_split import split_region_at_admin_level
 from subregions import (
     get_parent_region_id,
     get_region_country,
@@ -70,6 +70,9 @@ def fetch_borders(**kwargs):
         for rec in cursor:
             region_id = rec[8]
             country_id, country_name = get_region_country(g.conn, region_id)
+            if country_id is None:
+                # This means region_id was deleted from the DB meanwhile.
+                continue
             props = { 'name': rec[0] or '', 'nodes': rec[2], 'modified': rec[3],
                       'disabled': rec[4], 'count_k': rec[5],
                       'comment': rec[6],
@@ -152,7 +155,7 @@ def get_clusters_for_preview_one(region_id, next_level, mwm_size_thr):
             """, splitting_sql_params
         )
         if cursor.rowcount == 0:
-            split_region(g.conn, region_id, next_level, mwm_size_thr)
+            split_region_at_admin_level(g.conn, region_id, next_level, mwm_size_thr)
 
         cursor.execute(f"""
             SELECT subregion_ids[1],
@@ -258,7 +261,7 @@ def divide_into_clusters(region_ids, next_level, mwm_size_thr):
             """, splitting_sql_params
         )
         if cursor.rowcount == 0:
-            split_region(g.conn, region_id, next_level, mwm_size_thr)
+            split_region_at_admin_level(g.conn, region_id, next_level, mwm_size_thr)
 
         free_id = get_free_id()
         counter = 0
@@ -395,7 +398,7 @@ def find_potential_parents(region_id):
     return parents
 
 
-def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed'):
+def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed', mwm_size_est=None):
     errors, warnings = [], []
     with conn.cursor() as cursor:
         # Check if this id already in use
@@ -406,22 +409,21 @@ def copy_region_from_osm(conn, region_id, name=None, parent_id='not_passed'):
             errors.append(f"Region with id={region_id} already exists under name '{name}'")
             return errors, warnings
 
-        name_expr = f"'{name}'" if name else "name"
-        parent_id_expr = f"{parent_id}" if isinstance(parent_id, int) else "NULL"
-        cursor.execute(f"""
+        parent_id_sql = None if parent_id == 'not_passed' else parent_id
+        query = f"""
             INSERT INTO {borders_table}
-                    (id, geom, name, parent_id, modified, count_k)
-              SELECT osm_id, way, {name_expr}, {parent_id_expr}, now(), -1
+                    (id, geom, name, parent_id, modified, count_k, mwm_size_est)
+              SELECT osm_id, way, {'%s' if name is not None else 'name'}, %s, now(), -1, %s
               FROM {osm_table}
               WHERE osm_id = %s
-            """, (region_id,)
-        )
+        """
+        args = (parent_id_sql, mwm_size_est, region_id)
+        if name is not None:
+           args = (name,) + args
+        cursor.execute(query, args)
         if parent_id == 'not_passed':
             assign_region_to_lowest_parent(conn, region_id)
-        try:
-            update_border_mwm_size_estimation(conn, region_id)
-        except Exception as e:
-            warnings.append(str(e))
+
         return errors, warnings
 
 
